@@ -1,0 +1,115 @@
+🐛 SCROLLING ISSUES - WINDSURF IDE
+
+PROBLEMAS IDENTIFICADOS:
+❌ Scrolling instável na interface
+❌ Mouse funciona intermitentemente
+❌ Teclado não responde para navegação
+❌ Comportamento inconsistente
+
+POSSÍVEIS CAUSAS:
+1. Event listeners conflitantes
+2. CSS overrides incompletos
+3. JavaScript interference
+4. Windsurf IDE specific bugs
+5. Focus management issues
+
+SOLUÇÕES ADICIONAIS PARA TESTAR:
+
+1. JavaScript Event Fixes:
+```javascript
+// Remover todos os event listeners conflitantes
+document.addEventListener('wheel', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  const container = e.target.closest('.chat-messages');
+  if (container) {
+    container.scrollTop += e.deltaY;
+  }
+}, { passive: false });
+
+// Keyboard navigation
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    const container = document.querySelector('.chat-messages');
+    if (container) {
+      e.preventDefault();
+      container.scrollTop += e.key === 'ArrowDown' ? 50 : -50;
+    }
+  }
+});
+```
+
+2. CSS Mais Agressivo:
+```css
+/* Forçar scrolling em todos os casos */
+.chat-messages {
+  height: auto !important;
+  max-height: calc(100vh - 200px) !important;
+  overflow-y: scroll !important;
+  overflow-x: hidden !important;
+  scroll-behavior: smooth !important;
+  pointer-events: auto !important;
+  user-select: text !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+
+/* Remover qualquer interferência */
+.chat-messages * {
+  pointer-events: auto !important;
+  user-select: text !important;
+}
+
+/* Forçar focus */
+.chat-input {
+  pointer-events: auto !important;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  -ms-user-select: text !important;
+}
+```
+
+3. Focus Management:
+```javascript
+// Garantir focus correto
+const ensureFocus = () => {
+  const input = document.getElementById('chat-input');
+  if (input && document.activeElement !== input) {
+    input.focus();
+  }
+};
+
+// Auto-focus em mensagens novas
+const messageObserver = new MutationObserver(() => {
+  ensureFocus();
+});
+
+messageObserver.observe(document.querySelector('.chat-messages'), {
+  childList: true
+});
+```
+
+4. Reset Completo:
+```javascript
+// Reset completo do scroll
+const resetScrolling = () => {
+  const container = document.querySelector('.chat-messages');
+  if (container) {
+    // Remover todos os event listeners
+    container.replaceWith(container.cloneNode(true));
+    
+    // Adicionar novos listeners
+    const newContainer = document.querySelector('.chat-messages');
+    newContainer.addEventListener('wheel', handleWheel, { passive: false });
+    newContainer.addEventListener('keydown', handleKeydown);
+  }
+};
+```
+
+WORKAROUND TEMPORÁRIO:
+1. Usar navegador externo (Chrome/Firefox)
+2. Testar em VS Code
+3. Reiniciar Windsurf IDE
+4. Limpar cache do navegador
+
+STATUS: 🔄 INVESTIGAÇÃO CONTINUA

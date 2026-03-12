@@ -1,0 +1,46 @@
+
+Quero criar um sistema web agêntico (MCP+MoE+LLM) para rodar localmente, similar ao Trae Ai, tão bom quanto ele, que possa codar, acessar arquivos localmente. Será meu orquestrador, engenheiro sênior e CTO local. Rodará em uma interface web, mas poderá usar o VS Code, navegadores, serviços e protocolos via terminal (inclusive cmd e power shell) para desenvolvimento, sem restrições, capaz de produzir os artefatos necessários para cada projeto. 
+
+O agente poderá melhorar sua própria interface, criar customizações e novas ferramentas para seu uso, de acordo com a necessidade dos projetos. Está em uma máquina isolada, dedicada para ele. Só não está autorizado a contratar serviços que impliquem em custo ou risco legal. Nenhum código deve ser enviado "para fora". Preferencialmente gera localmente. 
+
+Quero que esse sistema possua um painel integrado, que permita conectá-lo a uma LLM local de forma descomplicada, e que também permita o uso, rotação e gerenciamento de chaves de API remotas (gratuitas e pagas) de forma segura. 
+
+Quero que ele use RAG e sistemas de dados locais para aumentar a capacidade dos contextos, armazenamento e histórico de chats.
+
+Quero que ele possua agentes e perfis altamente especializados em desenvolvimento que possam desenvolver atividades em paralelo. Perfis iniciais:
+
+- Skill Buider (importante para criar novos skills e poder aperfeiçoar os existentes)
+- Frontend (O mais completo quanto possível)
+- Backend (O mais completo quanto possível)
+- Coldfusion (Especialista)
+- Git
+- GitHub
+- Bancos de dados
+- Segurança de dados e sistemas
+- Auditoria de segurança de sistemas
+- SEO
+- Um criador de Extensão Agêntica para VS Code (a ideia aqui é poder criar uma nova IDE baseada no VS Code, personalizada, talvez criando uma extensão que usa a Language Model API do VS Code para permitir que o sistema agêntico possa usar a nova IDE).
+
+Quero que seja viável que possamos também conectar o sistema a bases gratuitas de fine-tunning, para treinar os agentes.
+
+Na interface do sistema web, além de uma tela de chat, quero uma sidebar colapsável que ofereça acesso rápido a:
+
+Acrescente a ele os seguintes componentes:
+
+Todas as tarefas > (Histórico)
+Nova tarefa
+Projetos + (Lista de projetos executados, planejados ou em andamento)
+Novo Projeto
+Dashboard (Projetos e tarefas em execução, idle/queue/deadline de cada uma) 
+Relatórios (Status de projetos, % concluído, previsões de entrega (horas/dias), artefatos previstos, artefatos entregues) 
+Central de skills > (Lista de todos os skills, seus conteúdos, e a possibilidade de edição manual deles)
+Central de agentes > (Lista de todos os agentes, exibindo status, uso, o que está fazendo, alertas) 
+Machine Learning (ML) (Acesso para um painel de controle e configuração)
+RAG (Acesso para um painel de controle e configuração)
+
+Consegue planejar, formatar detalhadamente e documentar esse projeto?
+
+Toda a estrutura e documentação deve ser organizada em: C:\Users\pemartins\Desktop\agentic
+
+
+

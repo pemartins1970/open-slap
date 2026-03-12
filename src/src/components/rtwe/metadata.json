@@ -1,0 +1,5 @@
+{
+  "name": "Banana Agent: Frontend UI Generator",
+  "description": "Um sistema agêntico para criação de interfaces frontend utilizando Gemini Flash (Nano Banana) e Tailwind CSS.",
+  "requestFramePermissions": []
+}

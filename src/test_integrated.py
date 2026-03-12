@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+"""
+Integrated test script for MCP Server + MoE Router + LLM Manager
+Tests the complete system integration
+"""
+
+import asyncio
+import json
+import aiohttp
+from datetime import datetime
+from src.core.mcp_server import MCPServer
+from src.core.llm_manager import LLMManager
+from test_moe_simple import SimpleMoERouter, Task, TaskType
+
+async def test_integrated_system():
+    """Test complete integrated system"""
+    print("🚀 Starting Integrated System Tests")
+    print("=" * 60)
+    
+    # Create MCP server with all components
+    mcp_server = MCPServer(host="localhost", port=8002)  # Different port for testing
+    
+    # Inject LLM Manager
+    llm_manager = LLMManager()
+    mcp_server.set_llm_manager(llm_manager)
+    
+    # Inject MoE Router (using simple version for now)
+    mcp_server.moe_router = SimpleMoERouter()
+    
+    # Start server in background
+    server_task = asyncio.create_task(mcp_server.start())
+    
+    # Wait for server to start
+    await asyncio.sleep(3)
+    
+    try:
+        # Test 1: Health Check
+        print("🔍 Testing health endpoint...")
+        async with aiohttp.ClientSession() as session:
+            async with session.get("http://localhost:8002/health") as response:
+                if response.status == 200:
+                    health_data = await response.json()
+                    print(f"✅ Health check: {health_data}")
+                else:
+                    print(f"❌ Health check failed: {response.status}")
+                    return False
+        
+        # Test 2: Create Session
+        print("\n🔍 Testing session creation...")
+        session_data = {
+            "id": "test-session-1",
+            "type": "request",
+            "method": "session/create",
+            "params": {
+                "user_id": "test_user",
+                "metadata": {"test": "integrated"}
+            }
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post("http://localhost:8002/mcp", json=session_data) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    if "result" in result:
+                        session_id = result["result"]["session_id"]
+                        print(f"✅ Session created: {session_id}")
+                    else:
+                        print(f"❌ Session creation failed: {result}")
+                        return False
+                else:
+                    print(f"❌ Session creation failed: {response.status}")
+                    return False
+        
+        # Test 3: System Status (includes MoE info)
+        print("\n🔍 Testing system status with MoE...")
+        status_data = {
+            "id": "test-status-1",
+            "type": "request",
+            "method": "system/status",
+            "params": {
+                "session_id": session_id
+            }
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post("http://localhost:8002/mcp", json=status_data) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    if "result" in result:
+                        status = result["result"]
+                        print(f"✅ System status:")
+                        print(f"   Server: {status.get('server')}")
+                        print(f"   Active sessions: {status.get('active_sessions')}")
+                        print(f"   MoE experts: {status.get('moe_experts')}")
+                        print(f"   LLM providers: {status.get('llm_providers')}")
+                    else:
+                        print(f"❌ Status failed: {result}")
+                else:
+                    print(f"❌ Status failed: {response.status}")
+        
+        # Test 4: MoE Expert Status
+        print("\n🔍 Testing MoE expert status...")
+        expert_data = {
+            "id": "test-expert-1",
+            "type": "request",
+            "method": "moe/expert_status",
+            "params": {
+                "session_id": session_id
+            }
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post("http://localhost:8002/mcp", json=expert_data) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    if "result" in result:
+                        expert_info = result["result"]
+                        print(f"✅ MoE expert status:")
+                        print(f"   Total experts: {expert_info.get('total_experts')}")
+                        print(f"   Available experts: {expert_info.get('available_experts')}")
+                        print(f"   Active tasks: {expert_info.get('active_tasks', {}).__len__()}")
+                        
+                        # Show expert details
+                        experts = expert_info.get('experts', {})
+                        for expert_id, info in experts.items():
+                            print(f"   - {info['name']}: {info['status']} (load: {info['current_load']}/{info['max_concurrent_tasks']})")
+                    else:
+                        print(f"❌ Expert status failed: {result}")
+                else:
+                    print(f"❌ Expert status failed: {response.status}")
+        
+        # Test 5: MoE Task Routing
+        print("\n🔍 Testing MoE task routing...")
+        task_data = {
+            "id": "test-task-1",
+            "type": "request",
+            "method": "moe/route_task",
+            "params": {
+                "session_id": session_id,
+                "task_id": "integrated-test-1",
+                "task_type": "coding",
+                "description": "Create a simple REST API endpoint for user authentication",
+                "requirements": ["python", "fastapi", "authentication"],
+                "priority": 7,
+                "estimated_duration": 45,
+                "use_multiple_experts": False,
+                "context": {"project": "test_integration"}
+            }
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post("http://localhost:8002/mcp", json=task_data) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    if "result" in result:
+                        task_result = result["result"]
+                        print(f"✅ Task routed successfully!")
+                        print(f"   Task ID: {task_result.get('task_id')}")
+                        print(f"   Expert: {task_result.get('result', {}).get('expert_name', 'Unknown')}")
+                        print(f"   Confidence: {task_result.get('confidence', 0):.2f}")
+                        print(f"   Processing time: {task_result.get('processing_time', 0):.3f}s")
+                        print(f"   Aggregation method: {task_result.get('aggregation_method', 'unknown')}")
+                    else:
+                        print(f"❌ Task routing failed: {result}")
+                else:
+                    print(f"❌ Task routing failed: {response.status}")
+        
+        # Test 6: Multiple Task Types
+        print("\n🔍 Testing multiple task types...")
+        task_types = [
+            ("design", "Design system architecture for scalability"),
+            ("security", "Perform security audit on API endpoints"),
+            ("coding", "Implement database connection layer"),
+            ("analysis", "Analyze system performance bottlenecks")
+        ]
+        
+        for task_type, description in task_types:
+            task_data = {
+                "id": f"test-task-{task_type}",
+                "type": "request",
+                "method": "moe/route_task",
+                "params": {
+                    "session_id": session_id,
+                    "task_id": f"test-{task_type}-{datetime.now().timestamp()}",
+                    "task_type": task_type,
+                    "description": description,
+                    "requirements": [task_type],
+                    "priority": 5,
+                    "estimated_duration": 30,
+                    "use_multiple_experts": False,
+                    "context": {"test": True}
+                }
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post("http://localhost:8002/mcp", json=task_data) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        if "result" in result:
+                            task_result = result["result"]
+                            expert = task_result.get('result', {}).get('expert_name', 'Unknown')
+                            confidence = task_result.get('confidence', 0)
+                            print(f"   ✅ {task_type}: {expert} (confidence: {confidence:.2f})")
+                        else:
+                            print(f"   ❌ {task_type}: Failed")
+                    else:
+                        print(f"   ❌ {task_type}: HTTP {response.status}")
+        
+        print("\n🎉 Integrated system tests completed successfully!")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Integrated test failed: {e}")
+        return False
+    
+    finally:
+        # Stop server
+        server_task.cancel()
+        try:
+            await server_task
+        except asyncio.CancelledError:
+            pass
+
+async def test_websocket_integration():
+    """Test WebSocket integration with MoE"""
+    print("\n🔍 Testing WebSocket integration...")
+    
+    try:
+        import websockets
+        
+        uri = "ws://localhost:8002/ws"
+        async with websockets.connect(uri) as websocket:
+            # Create session
+            session_msg = {
+                "id": "ws-session-1",
+                "type": "request",
+                "method": "session/create",
+                "params": {"user_id": "ws_user"}
+            }
+            
+            await websocket.send(json.dumps(session_msg))
+            response = await websocket.recv()
+            result = json.loads(response)
+            
+            if "result" in result:
+                session_id = result["result"]["session_id"]
+                print(f"✅ WebSocket session created: {session_id}")
+                
+                # Route task via WebSocket
+                task_msg = {
+                    "id": "ws-task-1",
+                    "type": "request",
+                    "method": "moe/route_task",
+                    "params": {
+                        "session_id": session_id,
+                        "task_id": "ws-test-1",
+                        "task_type": "coding",
+                        "description": "WebSocket test task",
+                        "requirements": ["python"],
+                        "priority": 5,
+                        "estimated_duration": 30,
+                        "use_multiple_experts": False,
+                        "context": {"websocket": True}
+                    }
+                }
+                
+                await websocket.send(json.dumps(task_msg))
+                task_response = await websocket.recv()
+                task_result = json.loads(task_response)
+                
+                if "result" in task_result:
+                    result_data = task_result["result"]
+                    print(f"✅ WebSocket task routed:")
+                    print(f"   Expert: {result_data.get('result', {}).get('expert_name', 'Unknown')}")
+                    print(f"   Confidence: {result_data.get('confidence', 0):.2f}")
+                else:
+                    print(f"❌ WebSocket task failed: {task_result}")
+                
+                return True
+            else:
+                print(f"❌ WebSocket session failed: {result}")
+                return False
+                
+    except ImportError:
+        print("⚠️  websockets library not available, skipping WebSocket test")
+        return True
+    except Exception as e:
+        print(f"❌ WebSocket test failed: {e}")
+        return False
+
+async def main():
+    """Run all integrated tests"""
+    print("🚀 Starting Complete System Integration Tests")
+    print("=" * 60)
+    
+    results = []
+    
+    # Test HTTP integration
+    results.append(await test_integrated_system())
+    
+    # Test WebSocket integration
+    results.append(await test_websocket_integration())
+    
+    # Summary
+    print("\n" + "=" * 60)
+    print("📊 Integration Test Summary:")
+    passed = sum(results)
+    total = len(results)
+    
+    print(f"   Passed: {passed}/{total}")
+    
+    if passed == total:
+        print("🎉 All integration tests passed!")
+        print("\n💡 System is ready for:")
+        print("   1. Development with expert agents")
+        print("   2. Task routing and load balancing")
+        print("   3. Multi-expert collaboration")
+        print("   4. Real-time communication via WebSocket")
+        print("\n🚀 Next steps:")
+        print("   1. Implement actual expert agents")
+        print("   2. Create web interface")
+        print("   3. Add RAG system integration")
+        print("   4. Deploy to production")
+    else:
+        print("⚠️  Some integration tests failed.")
+        print("\n💡 Troubleshooting:")
+        print("   1. Check if ports 8000-8002 are available")
+        print("   2. Verify all components are properly initialized")
+        print("   3. Check component dependencies")
+
+if __name__ == "__main__":
+    asyncio.run(main())

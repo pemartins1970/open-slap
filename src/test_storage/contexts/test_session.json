@@ -1,0 +1,16 @@
+{
+  "session_id": "test_session",
+  "project_id": "test_project",
+  "conversation_history": [
+    {
+      "role": "user",
+      "content": "Test message",
+      "timestamp": "2026-03-04T14:02:29.425216"
+    }
+  ],
+  "working_directory": "/test/path",
+  "environment_vars": {
+    "TEST": "value"
+  },
+  "agent_preferences": {}
+}

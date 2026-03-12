@@ -1,0 +1,9 @@
+src/.env
+src/data/*.db
+src/backend/data/*.db
+src/**/__pycache__/
+src/**/.pytest_cache/
+src/**/node_modules/
+src/**/dist/
+src/logs/
+*.log
