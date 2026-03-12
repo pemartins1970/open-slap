@@ -172,6 +172,8 @@ def _friction_frontend_payload(
         "friction_event_id": str(event_id),
         "github_url": github_url,
         "message": message,
+        "product": report.product,
+        "layer": report.layer,
         "mode": normalized_mode,
         "status": status,
         "event_id": event_id,
@@ -213,12 +215,16 @@ async def _create_github_issue(payload: Dict[str, Any], submission_mode: str) ->
         raise RuntimeError("GitHub friction env vars missing")
 
     event = payload.get("event", {})
+    meta = payload.get("meta", {})
     code = event.get("code", "TRAVA")
     layer = event.get("layer", "security")
     title = f"[FRICTION] {code} — {layer}"
     body = _issue_markdown(payload)
     normalized_mode = (submission_mode or "").strip().lower()
     labels = ["friction-report", "security-layer", "layer:" + str(layer)]
+    product = (meta.get("product") or "").strip().lower()
+    if product:
+        labels.append("product:" + product)
     if normalized_mode == "auto":
         labels.append("auto-submitted")
     else:
