@@ -281,7 +281,7 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
 
             <div style={styles.toggle}>
               <span style={{ color: 'var(--text-dim)', marginRight: '8px' }}>
-                {isLogin ? 'Don't have an account?' : 'Already have an account?'}
+                {isLogin ? "Don't have an account?" : 'Already have an account?'}
               </span>
               <a
                 href="#"

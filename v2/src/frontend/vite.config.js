@@ -8,11 +8,11 @@ export default defineConfig({
     port: 3000,
     strictPort: true,
     proxy: {
-      '/auth': 'http://127.0.0.1:8011',
-      '/api': 'http://127.0.0.1:8011',
-      '/media': 'http://127.0.0.1:8011',
+      '/auth': 'http://127.0.0.1:8000',
+      '/api': 'http://127.0.0.1:8000',
+      '/media': 'http://127.0.0.1:8000',
       '/ws': {
-        target: 'ws://127.0.0.1:8011',
+        target: 'ws://127.0.0.1:8000',
         ws: true
       }
     }

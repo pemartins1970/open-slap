@@ -8,8 +8,8 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Login from './pages/Login';
 import useAuth from './hooks/useAuth';
 
-const OPEN_SLAP_LOGO_SRC = '/media/open_slap.png';
-const AGENT_AVATAR_SRC = '/media/slap.png';
+const OPEN_SLAP_LOGO_SRC = '/open_slap.png';
+const AGENT_AVATAR_SRC = '/agent/slap.png';
 
 const App = () => {
   const { user, loading, login, register, logout, getAuthHeaders, isAuthenticated, token, requestPasswordReset, confirmPasswordReset } = useAuth();
@@ -26,6 +26,7 @@ const App = () => {
   const wsRef = useRef(null);
   const messagesEndRef = useRef(null);
   const hasHttpHydratedRef = useRef(false);
+  const pendingAutoSendRef = useRef(null);
   const sessionId = useRef(`session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
   const [centerView, setCenterView] = useState('chat');
   const [chatSearch, setChatSearch] = useState('');
@@ -120,18 +121,18 @@ const App = () => {
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
   const translations = {
     pt: {
-      app_title: 'Open Slap! Agentic engine for makers',
+      app_title: 'Open Slap! Motor agêntico para makers',
       connected: 'Conectado',
       disconnected: 'Desconectado',
       settings: 'Configurações',
       sign_out: 'Sair',
       menu: 'MENU',
       menu_expand: 'Expandir menu',
-      menu_collapse: 'Colapsar menu',
-      new_task: 'Nova tarefa',
+      menu_collapse: 'Recolher menu',
+      new_task: '➕ Tarefa',
       conversations: 'Conversas',
       tasks: 'Tarefas',
-      my_team: 'Meu time',
+      my_team: 'Minha equipe',
       customize: 'Personalizar',
       donate: 'Doações',
       loading: 'Carregando Open Slap!...',
@@ -195,7 +196,10 @@ const App = () => {
       theme_slate: 'Slate',
       theme_solarized: 'Solarized',
       theme_light: 'Claro',
-      theme_paper: 'Papel'
+      theme_paper: 'Papel',
+      create_new_agent_prompt: 'Crie um novo agente. Faça perguntas para coletar os dados necessários (nome, objetivo, habilidades, limites) e no final gere o pacote do agente.',
+      send: 'Enviar',
+      create_new_skill: 'Criar nova skill'
     },
     en: {
       app_title: 'Open Slap! Agentic engine for makers',
@@ -206,7 +210,7 @@ const App = () => {
       menu: 'MENU',
       menu_expand: 'Expand menu',
       menu_collapse: 'Collapse menu',
-      new_task: 'New task',
+      new_task: '➕ Task',
       conversations: 'Conversations',
       tasks: 'Tasks',
       my_team: 'My team',
@@ -273,7 +277,10 @@ const App = () => {
       theme_slate: 'Slate',
       theme_solarized: 'Solarized',
       theme_light: 'Light',
-      theme_paper: 'Paper'
+      theme_paper: 'Paper',
+      create_new_agent_prompt: 'Create a new agent. Ask questions to collect the necessary data (name, goal, skills, limits) and generate the agent package at the end.',
+      send: 'Send',
+      create_new_skill: 'Create new skill'
     },
     es: {
       app_title: 'Open Slap! Motor agéntico para makers',
@@ -284,7 +291,7 @@ const App = () => {
       menu: 'MENÚ',
       menu_expand: 'Expandir menú',
       menu_collapse: 'Contraer menú',
-      new_task: 'Nueva tarea',
+      new_task: '➕ Tarea',
       conversations: 'Conversaciones',
       tasks: 'Tareas',
       my_team: 'Mi equipo',
@@ -351,7 +358,10 @@ const App = () => {
       theme_slate: 'Pizarra',
       theme_solarized: 'Solarizado',
       theme_light: 'Claro',
-      theme_paper: 'Papel'
+      theme_paper: 'Papel',
+      create_new_agent_prompt: 'Crea un nuevo agente. Haz preguntas para recopilar los datos necesarios (nombre, objetivo, habilidades, límites) y genera el paquete del agente al final.',
+      send: 'Enviar',
+      create_new_skill: 'Crear nueva skill'
     },
     ar: {
       app_title: 'Open Slap! محرّك وكلائي للصنّاع',
@@ -429,7 +439,10 @@ const App = () => {
       theme_slate: 'الأردواز',
       theme_solarized: 'شمسي',
       theme_light: 'فاتح',
-      theme_paper: 'ورقي'
+      theme_paper: 'ورق',
+      create_new_agent_prompt: 'إنشاء وكيل جديد. اطرح أسئلة لجمع البيانات اللازمة (الاسم، الهدف، المهارات، الحدود) وقم بإنشاء حزمة الوكيل في النهاية.',
+      send: 'إرسال',
+      create_new_skill: 'إنشاء مهارة جديدة'
     },
     zh: {
       app_title: 'Open Slap! 面向创作者的智能代理引擎',
@@ -507,7 +520,10 @@ const App = () => {
       theme_slate: '石板',
       theme_solarized: '日光化',
       theme_light: '明亮',
-      theme_paper: '纸张'
+      theme_paper: '纸张',
+      create_new_agent_prompt: '创建一个新代理。提出问题以收集必要的数据（名称，目标，技能，限制），并在最后生成代理包。',
+      send: '发送',
+      create_new_skill: '创建新技能'
     }
   };
   const t = (key) => {
@@ -1309,9 +1325,12 @@ const App = () => {
     }
   };
 
-  const createTaskWithPrefill = async (prefill) => {
+  const createTaskWithPrefill = async (prefill, autoSend = false) => {
     await createNewTask();
     setInput(String(prefill || ''));
+    if (autoSend) {
+      pendingAutoSendRef.current = String(prefill || '');
+    }
   };
 
   useEffect(() => {
@@ -2495,6 +2514,40 @@ const App = () => {
       setConnected(true);
       console.log('WebSocket conectado');
       fetchRuntimeLlmLabel();
+
+      if (pendingAutoSendRef.current) {
+        const content = pendingAutoSendRef.current;
+        pendingAutoSendRef.current = null;
+
+        const now = Date.now();
+        const userMessage = {
+          role: 'user',
+          content: content,
+          id: `${now}-${Math.random().toString(16).slice(2)}`
+        };
+
+        setStreaming(true);
+        setMessages(prev => [
+          ...prev,
+          userMessage,
+          {
+            role: 'assistant',
+            content: '',
+            streaming: true,
+            id: `${now + 1}-${Math.random().toString(16).slice(2)}`
+          }
+        ]);
+        setInput('');
+
+        const activeSkill = (skills || []).find((s) => s.id === selectedSkillId) || null;
+        ws.send(JSON.stringify({
+          type: 'chat',
+          content: content,
+          skill_id: activeSkill?.id || null,
+          skill_web_search: activeSkill?.content?.web_search === true,
+          force_expert_id: forceExpertId || null
+        }));
+      }
     };
 
     ws.onmessage = (event) => {
@@ -2782,7 +2835,7 @@ const App = () => {
     useEffect(() => {
       let alive = true;
       setDonateTextLoading(true);
-      fetch('/media/doacoes.txt', { cache: 'no-store' })
+      fetch('/doacoes.txt', { cache: 'no-store' })
         .then((r) => r.text())
         .then((txt) => {
           if (!alive) return;
@@ -2838,10 +2891,10 @@ const App = () => {
         }}
       >
         <div style={{ minWidth: 0 }}>
-          <img
-            src="/media/pemartins.jpg"
-            alt="Pê Martins"
-            style={{
+            <img
+              src="/pemartins.jpg"
+              alt="Pê Martins"
+              style={{
               width: '100%',
               borderRadius: '12px',
               border: '1px solid rgba(255,255,255,0.10)',
@@ -2854,9 +2907,9 @@ const App = () => {
               <input type="hidden" name="no_recurring" value="0" />
               <input type="hidden" name="currency_code" value="BRL" />
               <input
-                type="image"
-                src="https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif"
-                border="0"
+                  type="image"
+                  src="/btn_donateCC_LG.gif"
+                  border="0"
                 name="submit"
                 title="PayPal - The safer, easier way to pay online!"
                 alt="Donate with PayPal button"
@@ -3054,7 +3107,7 @@ const App = () => {
                         ['➕ New Task', 'Click "New Task" in the sidebar. The CTO skill loads automatically — describe your project and it will create a structured plan.'],
                         ['🧠 Skills', 'Go to Customize → Skills to see all built-in skills (CTO, Architect, Backend, Frontend, SEO…). Click any skill to run it.'],
                         ['🔌 Connectors', 'Go to Customize → Connectors to link GitHub, Google Calendar or Gmail. The agent will use your live data automatically.'],
-                        ['👍 Feedback', 'Rate any assistant reply with 👍/👎. This helps the system learn what's useful.'],
+                        ['👍 Feedback', "Rate any assistant reply with 👍/👎. This helps the system learn what's useful."],
                         ['🗂️ Projects', 'Create a project in Settings → Projects to share context across multiple tasks.'],
                       ].map(([title, desc]) => (
                         <div key={title} style={{ marginBottom: '12px' }}>
@@ -3143,22 +3196,6 @@ const App = () => {
                     <button
                       style={{
                         ...styles.sidebarButton,
-                        ...(sidebarHoverKey === 'tasks_new' ? styles.sidebarButtonHover : {}),
-                        textAlign: sidebarCollapsed ? 'center' : 'left',
-                        padding: sidebarCollapsed ? '10px' : styles.sidebarButton.padding,
-                        justifyContent: sidebarCollapsed ? 'center' : 'flex-start'
-                      }}
-                      onMouseEnter={() => setSidebarHoverKey('tasks_new')}
-                      onMouseLeave={() => setSidebarHoverKey('')}
-                      onClick={createNewTask}
-                      title={t('new_task')}
-                    >
-                      ➕{sidebarCollapsed ? '' : ` ${t('new_task')}`}
-                    </button>
-                    <div style={{ height: '10px' }} />
-                    <button
-                      style={{
-                        ...styles.sidebarButton,
                         ...(centerView === 'conversations' ? styles.sidebarButtonActive : {}),
                         ...(sidebarHoverKey === 'conversations' ? styles.sidebarButtonHover : {}),
                         textAlign: sidebarCollapsed ? 'center' : 'left',
@@ -3189,6 +3226,22 @@ const App = () => {
                     >
                       ✅{sidebarCollapsed ? '' : ` ${t('tasks')}`}
                     </button>
+                    <button
+                        style={{
+                          ...styles.sidebarButton,
+                          ...(sidebarHoverKey === 'tasks_new' ? styles.sidebarButtonHover : {}),
+                          textAlign: sidebarCollapsed ? 'center' : 'left',
+                          padding: sidebarCollapsed ? '10px' : styles.sidebarButton.padding,
+                          justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
+                          marginTop: '8px'
+                        }}
+                        onMouseEnter={() => setSidebarHoverKey('tasks_new')}
+                        onMouseLeave={() => setSidebarHoverKey('')}
+                        onClick={createNewTask}
+                        title={t('new_task')}
+                      >
+                        {sidebarCollapsed ? '➕' : ` ${t('new_task')}`}
+                      </button>
                     {/* Plan tasks panel + orchestration */}
                     {!sidebarCollapsed && planTasks.length > 0 && (
                       <div style={{
@@ -3620,7 +3673,8 @@ const App = () => {
                           style={styles.settingsPrimaryButton}
                           onClick={() => {
                             createTaskWithPrefill(
-                              'Crie um novo agente. Faça perguntas para coletar os dados necessários (nome, objetivo, habilidades, limites) e no final gere o pacote do agente.'
+                              t('create_new_agent_prompt') || 'Crie um novo agente. Faça perguntas para coletar os dados necessários (nome, objetivo, habilidades, limites) e no final gere o pacote do agente.',
+                              true
                             );
                           }}
                         >
@@ -3800,14 +3854,14 @@ const App = () => {
                                   Skills
                                 </div>
                                 <button
-                                  style={styles.settingsPrimaryButton}
+                                  style={styles.settingsPrimaryButton}        
                                   onClick={() => {
                                     createTaskWithPrefill(
-                                      'Crie uma nova skill. Faça perguntas para coletar os dados necessários (nome, propósito, entradas/saídas, exemplos) e gere a implementação. Ao final, valide com um checklist e sugira testes.'
+                                      'Crie uma nova skill. Faça perguntas para coletar os dados necessários (nome, propósito, entradas/saídas, exemplos) e gere a implementação. Ao final, valide com um checklist e sugira testes.'     
                                     );
                                   }}
                                 >
-                                  + Create new skill
+                                  + {t('create_new_skill') || 'Create new skill'}
                                 </button>
                               </div>
                               <div style={{ marginTop: '10px' }}>
@@ -4655,9 +4709,9 @@ const App = () => {
                             <textarea
                               style={{ ...styles.input, fontSize: `${Math.round(14 * chatFontScale)}px` }}
                               value={input}
-                              onChange={(e) => setInput(e.target.value)}
+                              onChange={(e) => setInput(e.target.value)}      
                               onKeyPress={handleKeyPress}
-                              placeholder="Type your message…"
+                              placeholder={t('search_chat_placeholder') || "Type your message…"}
                               disabled={streaming || !connected}
                             />
                           </div>
@@ -4669,7 +4723,7 @@ const App = () => {
                             onClick={sendMessage}
                             disabled={streaming || !connected}
                           >
-                            {streaming ? '⏳' : '🚀 Send'}
+                            {streaming ? '⏳' : `🚀 ${t('send') || 'Send'}`}
                           </button>
                         </div>
                       </div>

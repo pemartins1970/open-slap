@@ -22,6 +22,10 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 from dotenv import load_dotenv
 
+import mimetypes
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
+
 from fastapi import (
     FastAPI,
     HTTPException,
@@ -792,25 +796,35 @@ def _auto_memorize_user_message(user_id: int, user_message: str) -> int:
 
 
 def _is_runtime_introspection_query(text: str) -> bool:
-
     t = (text or "").strip().lower()
     if not t:
         return False
-    triggers = [
-        "ambiente",
+        
+    # High confidence triggers that work on their own
+    direct_triggers = [
         "sistema local",
-        "onde você está",
-        "onde voce esta",
-        "executado",
+        "onde você está rodando",
+        "onde você está executando",
+        "onde voce esta rodando",
+        "onde voce esta executando",
         "servidor local",
         "me descreva o ambiente",
-        "me descreva o ambiente de sistema",
-        "hardware",
-        "sistema operacional",
-        "os ",
-        "windows",
+        "descreva seu ambiente",
+        "sobre o seu ambiente",
+        "informações do sistema",
+        "informacoes do sistema",
     ]
-    return any(x in t for x in triggers)
+    if any(x in t for x in direct_triggers):
+        return True
+        
+    # Ambiguous tokens that require context
+    ambiguous_tokens = ["ambiente", "windows", "hardware", "sistema operacional"]
+    context_tokens = ["rodando", "executando", "qual versão", "qual versao", "onde", "descreva", "sobre"]
+    
+    if any(amb in t for amb in ambiguous_tokens) and any(ctx in t for ctx in context_tokens):
+        return True
+        
+    return False
 
 
 def _runtime_introspection_answer(
@@ -4774,6 +4788,27 @@ async def clear_session(
         del active_connections[session_id]
 
     return {"message": "Sessão limpa"}
+
+
+# ── Produção: servir o frontend buildado ──────────────────────────────────────
+# Quando o Vite já rodou `npm run build`, o FastAPI serve tudo sozinho.
+# Em desenvolvimento, o Vite roda separado na porta 3000 com proxy.
+_FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
+if _FRONTEND_DIST.exists():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(_FRONTEND_DIST / "assets")),
+        name="spa-assets",
+    )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def _serve_spa(full_path: str):
+        """Catch-all: serve index.html para qualquer rota não-API (SPA)."""
+        index = _FRONTEND_DIST / "index.html"
+        if not index.exists():
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"detail": "Frontend não buildado. Rode: npm run build"}, status_code=503)
+        return FileResponse(str(index))
 
 
 # Inicialização
