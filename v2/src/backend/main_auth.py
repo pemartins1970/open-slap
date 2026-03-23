@@ -22,9 +22,16 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 from dotenv import load_dotenv
 
-import mimetypes
-mimetypes.add_type("application/javascript", ".js")
-mimetypes.add_type("text/css", ".css")
+mimetypes.init()
+mimetypes.add_type("application/javascript", ".js", strict=True)
+mimetypes.add_type("application/javascript", ".mjs", strict=True)
+mimetypes.add_type("text/css", ".css", strict=True)
+mimetypes.types_map[".js"] = "application/javascript"
+mimetypes.types_map[".mjs"] = "application/javascript"
+mimetypes.types_map[".css"] = "text/css"
+mimetypes.common_types[".js"] = "application/javascript"
+mimetypes.common_types[".mjs"] = "application/javascript"
+mimetypes.common_types[".css"] = "text/css"
 
 from fastapi import (
     FastAPI,
