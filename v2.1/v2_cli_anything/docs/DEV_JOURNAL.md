@@ -235,3 +235,45 @@ Explicitly reserved for Slap! PRO. SQLite FTS covers 80% of use cases with zero 
 - **Verification before delivery**: each patch has a verification block (`python3 - <<'PYEOF'`) confirming what was done before moving on
 - **Backups before large patches**: `cp file file.bak` before any significant change
 - **Tests as documentation**: test names describe the expected behaviour, not the code
+
+---
+
+### v2.1 — Referências (memória/tokens) + risco de “zombie prompts” (30/03/2026)
+
+**Referências para estudar (insumos)**
+
+- TurboQuant (Google Research) — compressão extrema/eficiência, com foco em reduzir gargalos de memória em mecanismos de quantização e no contexto de KV-cache.
+  - https://research.google/blog/turboquant-redefining-ai-efficiency-with-extreme-compression/
+- Supermemory — “Memory API” e iniciativas de memória universal (inclui integrações e MCP).
+  - https://github.com/supermemoryai/
+- Pixel Agents — UI lúdica (VS Code) para visualizar agentes/terminais como personagens e estados (typing/reading/waiting), com potencial de “dashboard de agentes”.
+  - https://github.com/pablodelucca/pixel-agents
+- AgentScope — framework de agentes com foco em produção; abstrações, orquestração, memória e integrações (inclui MCP/A2A).
+  - https://github.com/agentscope-ai/agentscope
+- Everything Claude Code — “agent harness performance system”: otimização de tokens, hooks, memória, loops de verificação e scans de segurança.
+  - https://github.com/affaan-m/everything-claude-code
+- CodeVisualizer — extensão VS Code para grafos/fluxogramas e visualização do codebase (local-first).
+  - https://github.com/DucPhamNgoc08/CodeVisualizer
+- Blackbox CLI — gerenciamento de sessões, limites de tokens por conversa e compressão de histórico.
+  - https://www.blackbox.ai/
+  - https://github.com/blackboxaicode/cli
+- LLM Council — padrão de brainstorm/consenso: múltiplos modelos geram respostas, revisam entre si, e um “chairman” sintetiza.
+  - https://github.com/karpathy/llm-council
+
+**Como isso conecta com Open Slap (direções prováveis)**
+
+- Memória/Context: avaliar compressão/compactação “controlada” e “reversível” (camadas), para reduzir custo de contexto sem perder rastreabilidade.
+- Brainstorm: explorar um modo “council” opcional para ideação (geração paralela + revisão cruzada + síntese), limitado a tarefas de baixo risco e com controle de custos.
+- Dashboard de agentes: manter a UI atual, mas planejar uma “view alternativa” no futuro (inspirada em Pixel Agents) para estados e saúde de execução (conexão, tarefas, tokens, approvals).
+- Segurança: tratar memória como dado não confiável e introduzir barreiras explícitas contra “instruções persistentes” vindas de memória/TODO/perfis.
+
+**Segurança: mitigação de zombie prompts (plano)**
+
+- Definição: “zombie prompt” = instrução maliciosa ou indesejada que entra em um artefato persistente (memória, TODO, notas, contexto de projeto) e volta a ser injetada em conversas futuras, tentando reprogramar o agente (“ignore regras”, “exfiltre chaves”, “sempre execute comandos”, etc.).
+- Medidas:
+  - Firewall de ingestão: ao persistir memória/TODO, detectar padrões de prompt-injection e salvar como “untrusted_content” (ou descartar) em vez de “policy/instructions”.
+  - Firewall de montagem de contexto: toda memória persistida entra como “dados citados” (quote), nunca como instrução; nada do storage pode alterar regras do sistema.
+  - Proveniência + escopo: armazenar origem (user/agent/tool), timestamp, e scope (projeto/conversa). Contexto global deve ser mínimo e explicitamente aprovado.
+  - Quarentena e revisão: se um item for classificado como “instrução”/“comando”, exigir aprovação humana antes de reusar.
+  - Scans recorrentes: varrer itens persistidos em busca de padrões (ex.: “ignore previous”, “system prompt”, “reveal secrets”) e marcar/retirar.
+  - “Hard policy” no system prompt: explicitar que instruções vindas de memória/TODO são não-autoritativas e devem ser tratadas como dados.
