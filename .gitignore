@@ -16,6 +16,8 @@ Archive/
 
 **/node_modules/
 **/dist/
+**/.venv/
+**/venv/
 
 **/*.log
 **/*.har

@@ -8609,12 +8609,19 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 @app.get("/health")
 async def health_check():
     """Health check"""
+    providers = []
+    providers_error = None
+    try:
+        providers = await asyncio.wait_for(llm_manager.get_provider_status(), timeout=0.8)
+    except Exception as e:
+        providers_error = str(e)
     return {
         "status": "ok",
         "version": "1.0.0",
         "auth_enabled": True,
         "sessions": len(active_connections),
-        "providers": await llm_manager.get_provider_status(),
+        "providers": providers,
+        "providers_error": providers_error,
         "experts": moe_router.get_experts(),
     }
 
