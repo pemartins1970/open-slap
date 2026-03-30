@@ -1,0 +1,22 @@
+Criar e desenvolver o Open Slap! foi uma jornada realizada com carinho, e feita basicamente a partir de ferramentas gratuitas. O projeto, em boa parte foi spec driven, mas envolveu muita colaboração com IAs gratuitas, posto que não sou programador. Praticamente todas, colaboraram com o projeto, e tornaram algo antes impossível um produto realizado. O tempo de execução, principalmente nas etapas finais foi prolongado. Ainda assim, foi rápido. Esteticamente, o resultado poderia ser diferente, mas está maduro o suficiente para apresentar a vocês. É uma nova era.
+
+O Open Slap! foi feito para ser útil de verdade e acima de tudo, agnóstico. Ele foi pensado para permitir que você possa usar suas próprias chaves de API, do provedor que for de sua preferência. Ou uma LLM local, se sua máquina for moderna. Ou mesmo chaves de API gratuita. Pensei ao máximo para que o produto se adaptasse a diferentes perfis, a começar pelo meu. O Open Slap! foi realizado em um equipamento antigo, um core i5 de 2010 com 8 GB de RAM (atualizados pouco antes do projeto começar), carregado de limitações e desafios. 
+
+O critério foi simples: Funcionando no meu hardware, eu consigo assegurar que um monte de gente que possui um equipamento antigo parado tenha a chance de utilizar o produto, e dar uma finalidade bacana e produtiva a ele. O Open Slap! foi pensado para ajudar gente como eu: Que não programa, mas que tem vontade de testar suas ideias e realizar sonhos. No meu caso, não apenas os meus.
+
+O sistema oferece o mínimo necessário para você fazer isso. Ele permite a você criar e editar em seu próprio disco rígido, sem nenhuma ferramenta inicial adicional. Você pode criar sites, sistemas, o que você quiser. Feito no espírito maker.
+
+O processo de estruturação de memória foi pensado para não te deixar na mão, mitigar o sempre presente risco de alucinação das IAs, e assegurar o histórico integral dos chats. O agente evolui com você. É um processo mútuo de descobrir, aprender e cooperar. O produto pode se automodificar, se corrigir, evoluir, adicionar recursos.
+
+O GitHub do projeto traz as documentações técnicas necessárias. https://github.com/pemartins1970/open-slap
+
+O Open Slap! é open source e gratuito. A licença é APACHE. Você pode usar, modificar, gerar produtos derivados. Espero que ele seja útil a você. 
+
+Se for, e você gostar dele, faça uma doação. Isso me ajuda e motiva em novos projetos. E é justo. Doe com o quanto você quiser e puder.
+
+Um forte abraço, e boa sorte.
+
+Pê Martins
+
+
+ 

@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Local data
+src/data/*.db
+src/data/backups/
+src/backend/data/*.db
+
+# Frontend
+src/frontend/node_modules/
+src/frontend/dist/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
