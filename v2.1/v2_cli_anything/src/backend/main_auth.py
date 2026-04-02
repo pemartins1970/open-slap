@@ -5547,8 +5547,9 @@ async def register(user: UserRegister):
         }
     except HTTPException as e:
         raise e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao criar usuário: {str(e)}")
+    except Exception:
+        logger.exception("Unexpected error during user registration")
+        raise HTTPException(status_code=500, detail="Erro ao criar usuário")
 
 
 @app.post("/auth/login")
