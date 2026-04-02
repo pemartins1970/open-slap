@@ -144,7 +144,7 @@ class AuthManager:
             if not user:
                 return None
 
-            code = f"{secrets.randbelow(1_000_000):06d}"
+            code = secrets.token_urlsafe(16)
             code_hash = self.get_password_hash(code)
             expires_at = int(
                 (datetime.utcnow() + timedelta(minutes=expires_minutes)).timestamp()
