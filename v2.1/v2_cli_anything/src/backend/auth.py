@@ -41,7 +41,7 @@ def _load_or_create_jwt_secret() -> str:
 
 SECRET_KEY = _load_or_create_jwt_secret()
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 dias
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 2  # 2 horas
 
 
 class AuthManager:
