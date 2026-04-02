@@ -5,6 +5,7 @@ set "ROOT=%~dp0"
 set "SRC=%ROOT%src"
 set "VENV=%SRC%\.venv"
 set "PORT=5150"
+echo [backend] src: %SRC%
 
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr :%PORT% ^| findstr LISTENING') do taskkill /PID %%p /F >nul 2>nul
 
@@ -40,6 +41,7 @@ if errorlevel 1 goto :deps_install
 goto :run
 
 :deps_install
+  echo [backend] installing python deps...
   "%PY%" -m pip install --upgrade pip
   "%PY%" -m pip install -r "%SRC%\backend\requirements.txt"
   if errorlevel 1 exit /b 1
@@ -47,8 +49,13 @@ call :deps_ok
 if errorlevel 1 exit /b 1
 
 :run
+if /i "%~1"=="--deps-only" exit /b 0
+echo [backend] starting uvicorn on port %PORT%...
+set "RELOAD_FLAG="
+if /i "%OPENSLAP_RELOAD%"=="1" set "RELOAD_FLAG=--reload"
+if /i "%~1"=="--reload" set "RELOAD_FLAG=--reload"
 pushd "%SRC%"
-"%PY%" -m uvicorn backend.main_auth:app --host 127.0.0.1 --port %PORT% --reload
+"%PY%" -m uvicorn backend.main_auth:app --host 127.0.0.1 --port %PORT% %RELOAD_FLAG%
 popd
 exit /b 0
 

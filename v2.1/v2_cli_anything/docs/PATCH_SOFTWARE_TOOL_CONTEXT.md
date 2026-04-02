@@ -3,7 +3,7 @@
 
 ---
 
-## Para o Trae: leia esta seção antes de qualquer edição
+## Para contribuidores: leia esta seção antes de qualquer edição
 
 ### O que este patch resolve
 

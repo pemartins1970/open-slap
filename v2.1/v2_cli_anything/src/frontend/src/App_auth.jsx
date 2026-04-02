@@ -7,10 +7,20 @@ import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
 import useAuth from './hooks/useAuth';
+import useChatSocket from './hooks/useChatSocket';
+import { buildSysGlobalKernelPrompt } from './lib/kernelPrompt';
+import { maybeRepoDisambiguationInternalPrompt } from './lib/repoDisambiguation';
+import { translations } from './i18n/translations_auth';
+import { buildAppAuthStyles } from './styles/appAuthStyles';
+import { buildDefaultSkills } from './data/defaultSkills';
+import SystemSettingsPanel from './components/settings/SystemSettingsPanel';
+import LlmSettingsPanel from './components/settings/LlmSettingsPanel';
+import SecuritySettingsPanel from './components/settings/SecuritySettingsPanel';
 
 const OPEN_SLAP_LOGO_SRC = '/open_slap.png';
 const AGENT_AVATAR_SRC = '/agent/slap.png';
 const OPEN_SLAP_REPO_URL = 'https://github.com/pemartins1970/slap-ecosystem';
+const OPEN_SLAP_VERSION = 'v2.1';
 const OPEN_SLAP_ASCII_FONT =
   '"Cascadia Mono", Consolas, "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, "Liberation Mono", "Courier New", monospace';
 const OPEN_SLAP_ASCII = `open_slap > boot
@@ -29,6 +39,7 @@ const App = () => {
   const { user, loading, login, register, logout, getAuthHeaders, isAuthenticated, token, requestPasswordReset, confirmPasswordReset } = useAuth();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
+  const [bootInput, setBootInput] = useState('');
   const [connected, setConnected] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [runtimeLlmLabel, setRuntimeLlmLabel] = useState('');
@@ -43,8 +54,6 @@ const App = () => {
   const pendingAutoSendRef = useRef(null);
   const autoStartRef = useRef(false);
   const tempSkillResetTimerRef = useRef(null);
-  const chunkBufferRef = useRef('');
-  const chunkFlushRef = useRef(null);
   const listsRefreshTimerRef = useRef(null);
   const sessionId = useRef(`session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
   const [centerView, setCenterView] = useState('chat');
@@ -64,6 +73,9 @@ const App = () => {
   const [llmApiKeySource, setLlmApiKeySource] = useState('none');
   const [llmHasStoredApiKey, setLlmHasStoredApiKey] = useState(false);
   const [llmHasEnvApiKey, setLlmHasEnvApiKey] = useState(false);
+  const [llmProviderKeys, setLlmProviderKeys] = useState([]);
+  const [llmProviderKeysLoading, setLlmProviderKeysLoading] = useState(false);
+  const [llmProviderKeysError, setLlmProviderKeysError] = useState('');
   const [llmApiKeyOpen, setLlmApiKeyOpen] = useState(false);
   const llmApiKeyInputRef = useRef(null);
   const pendingSettingsActionRef = useRef(null);
@@ -94,12 +106,32 @@ const App = () => {
     allow_system_profile: true
   });
   const [securitySettingsUpdatedAt, setSecuritySettingsUpdatedAt] = useState('');
+  const [autoApproveCommands, setAutoApproveCommands] = useState([]);
+  const [autoApproveCommandsLoading, setAutoApproveCommandsLoading] = useState(false);
+  const [autoApproveCommandsError, setAutoApproveCommandsError] = useState('');
   const [automationClientBaseUrl, setAutomationClientBaseUrl] = useState('');
   const [automationClientApiKey, setAutomationClientApiKey] = useState('');
   const [automationClientHasApiKey, setAutomationClientHasApiKey] = useState(false);
   const [doctorReport, setDoctorReport] = useState(null);
   const [doctorError, setDoctorError] = useState('');
   const [doctorLoading, setDoctorLoading] = useState(false);
+  const [systemMapText, setSystemMapText] = useState('');
+  const [systemMapUpdatedAt, setSystemMapUpdatedAt] = useState('');
+  const [systemMapError, setSystemMapError] = useState('');
+  const [systemMapLoading, setSystemMapLoading] = useState(false);
+  const [externalMemoryProvider, setExternalMemoryProvider] = useState('');
+  const [externalMemoryUploading, setExternalMemoryUploading] = useState(false);
+  const [externalMemoryImports, setExternalMemoryImports] = useState([]);
+  const [externalMemoryImportsLoading, setExternalMemoryImportsLoading] = useState(false);
+  const [externalMemoryImportsError, setExternalMemoryImportsError] = useState('');
+  const [memoryDreamLoading, setMemoryDreamLoading] = useState(false);
+  const [memoryDreamDecayed, setMemoryDreamDecayed] = useState(0);
+  const [memoryDreamPruned, setMemoryDreamPruned] = useState(0);
+  const [memoryDreamSnapshot, setMemoryDreamSnapshot] = useState('');
+  const [rawMemoryQuery, setRawMemoryQuery] = useState('');
+  const [rawMemoryResults, setRawMemoryResults] = useState([]);
+  const [rawMemoryLoading, setRawMemoryLoading] = useState(false);
+  const [rawMemoryError, setRawMemoryError] = useState('');
   const hasDoctorBootedRef = useRef(false);
   const hasLangLoadedRef = useRef(false);
   const [commandModal, setCommandModal] = useState(null);
@@ -117,6 +149,8 @@ const App = () => {
   const [conversationSearchResults, setConversationSearchResults] = useState([]);
   const [tasksSearchResults, setTasksSearchResults] = useState([]);
   const [globalTodos, setGlobalTodos] = useState([]);
+  const [globalTodoScope, setGlobalTodoScope] = useState('project');
+  const [globalTodoShowAgent, setGlobalTodoShowAgent] = useState(false);
   const [taskTodos, setTaskTodos] = useState([]);
   const [taskTodosLoading, setTaskTodosLoading] = useState(false);
   const [taskTodoDraft, setTaskTodoDraft] = useState('');
@@ -151,19 +185,26 @@ const App = () => {
   const [activePlanConvId, setActivePlanConvId] = useState(null);
   const [activePlanMessageId, setActivePlanMessageId] = useState(null);
   const [activePlanLocalMsgId, setActivePlanLocalMsgId] = useState(null);
+  const [approvedPlanLocalMsgIds, setApprovedPlanLocalMsgIds] = useState({});
   const pendingPlanTasksRef = useRef({});
   // Message feedback
   const [messageFeedback, setMessageFeedback] = useState({}); // {message_id: 1|-1}
+  const [savedInfoLocalMsgIds, setSavedInfoLocalMsgIds] = useState({}); // {local_message_id: true}
   // MoE expert override
   const [forceExpertId, setForceExpertId] = useState('');
   const [lastExpertReason, setLastExpertReason] = useState('');
   const [lastExpertKeywords, setLastExpertKeywords] = useState([]);
+  const hasRestoredConversationRef = useRef(false);
   const [showRoutingDebug, setShowRoutingDebug] = useState(false);
   const [showExecutionPanel, setShowExecutionPanel] = useState(true);
-  const streamingRef = useRef(false);
   // Onboarding
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingChecked, setOnboardingChecked] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(0);
+  const [onboardingSoulDraft, setOnboardingSoulDraft] = useState({ name: '', age_range: '', goals: '' });
+  const [onboardingSoulSaving, setOnboardingSoulSaving] = useState(false);
+  const [onboardingError, setOnboardingError] = useState('');
+  const [onboardingActionLoading, setOnboardingActionLoading] = useState(false);
   // Projects
   const [projects, setProjects] = useState([]);
   const [activeProjectId, setActiveProjectId] = useState(null);
@@ -176,851 +217,113 @@ const App = () => {
   const orchPollRef = React.useRef(null);
 
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-  const translations = {
-    pt: {
-      app_title: 'Open Slap! Motor agêntico para makers',
-      connected: 'Conectado',
-      disconnected: 'Desconectado',
-      settings: 'Configurações',
-      sign_out: 'Sair',
-      menu: 'MENU',
-      menu_expand: 'Expandir menu',
-      menu_collapse: 'Recolher menu',
-      new_task: '➕ Tarefa',
-      conversations: 'Conversas',
-      tasks: 'Tarefas',
-      my_team: 'Minha equipe',
-      customize: 'Personalizar',
-      donate: 'Doações',
-      loading: 'Carregando Open Slap!...',
-      clear: 'Limpar',
-      new_conversation: '+ Nova conversa',
-      search_conversations_placeholder: 'Buscar conversas...',
-      no_conversations: 'Nenhuma conversa ainda.',
-      history_results: 'Resultados no histórico',
-      search_tasks_placeholder: 'Buscar tarefas...',
-      no_tasks: 'Nenhuma tarefa ainda.',
-      open_in_chat: 'Abrir no chat',
-      create_new_agent: '+ Criar novo agente',
-      connectors: 'Conectores',
-      connect: 'Conectar',
-      disconnect: 'Desconectar',
-      test: 'Testar',
-      connected_ok: 'Conectado',
-      not_connected: 'Não conectado',
-      save: 'Salvar',
-      remove: 'Remover',
-      cancel: 'Cancelar',
-      confirm: 'Confirmar',
-      language: 'Idioma',
-      connector_token_label: 'Token',
-      connector_token_placeholder: 'Cole aqui o token',
-      github_token_help: 'Personal access token do GitHub (classic ou fine-grained).',
-      google_token_help: 'Access token OAuth do Google (Bearer).',
-      telegram_token_help: 'Token do bot do Telegram. Depois de conectar, clique em “Gerar código” e envie “/link SEU_CODIGO” para o bot.',
-      telegram_link_code_title: 'Telegram — Vincular',
-      telegram_link_code_body_1: '1) No app: Conectores → Telegram → Gerar código',
-      telegram_link_code_body_2: '2) No Telegram: envie para o bot: /link SEU_CODIGO',
-      telegram_link_code_body_3: 'Para desconectar: /unlink',
-      telegram_link_code_label: 'Código',
-      telegram_link_code_expires: 'Expira em',
-      generate_code: 'Gerar código',
-      automation_client_help_tooltip: 'Entenda o cliente de automação',
-      automation_client_help_title: 'Cliente de automação (externo)',
-      automation_client_help_body_1: 'Este conector aponta para um serviço externo (ex.: Tera) que executa automações fora do Open Slap (browser, integrações, rotinas).',
-      automation_client_help_body_2: 'O agente chama esse serviço via Base URL com uma API key (Bearer). O endpoint /health é usado para teste.',
-      automation_client_help_body_3: 'Exemplo: Base URL = https://seu-automator.com  |  Health check = GET https://seu-automator.com/health',
-      success: 'Sucesso',
-      error: 'Erro',
-      back: 'Voltar',
-      donate_page_title: 'Doações',
-      remove_credential_question: 'Remover esta credencial?',
-      connector_validated: 'Conector validado.',
-      command_confirm_title: 'Confirmar execução de comando',
-      executing: 'Executando...',
-      execute: 'Executar',
-      decrease_font: 'Diminuir fonte',
-      increase_font: 'Aumentar fonte',
-      by_title: 'Por título',
-      no_history_results: 'Nenhum resultado no histórico.',
-      list_label: 'Lista',
-      in_progress: 'Em andamento',
-      completed: 'Realizada',
-      todos: 'TODOs',
-      add_todo: 'Adicionar TODO',
-      todo_placeholder: 'Descreva um TODO desta tarefa…',
-      no_todos: 'Nenhum TODO nesta tarefa.',
-      show_done: 'Exibir concluídos',
-      hide_done: 'Ocultar concluídos',
-      refresh: 'Atualizar',
-      pending_items: 'pendentes',
-      done_items: 'feitas',
-      last: 'Última',
-      open: 'Abrir',
-      complete: 'Concluir',
-      global_todo: 'TODO global',
-      no_pending: 'Nenhuma pendência.',
-      available_agents: 'Agentes disponíveis',
-      no_agents: 'Nenhum agente disponível.',
-      chat: 'Chat',
-      conversation_label: 'Conversa',
-      task_label: 'Tarefa',
-      search_chat_placeholder: 'Buscar no chat...',
-      theme: 'Tema',
-      theme_deep_space: 'Deep Space',
-      theme_midnight_blue: 'Midnight Blue',
-      theme_forest: 'Forest',
-      theme_crimson: 'Crimson',
-      theme_slate: 'Slate',
-      theme_solarized: 'Solarized',
-      theme_light: 'Claro',
-      theme_paper: 'Papel',
-      create_new_agent_prompt: 'Crie um novo agente. Faça perguntas para coletar os dados necessários (nome, objetivo, habilidades, limites) e no final gere o pacote do agente.',
-      send: 'Enviar',
-      create_new_skill: 'Criar nova skill',
-      skills: 'Habilidades',
-      skills_center: 'Central de habilidades',
-      llm_providers: 'LLM e Providers',
-      llm_free_keys_title: 'Chaves de API gratuitas',
-      llm_free_keys_body: 'Se você não utiliza serviços de provedores pagos ou LLMs locais, pode obter uma ou mais chaves gratuitas nos serviços abaixo.',
-      llm_free_keys_gemini: 'Gemini',
-      llm_free_keys_groq: 'Groq',
-      llm_free_keys_openrouter: 'Open Router',
-      security: 'Segurança',
-      memory: 'Memória',
-      execution_transparency: 'Execução e transparência',
-      show_execution_panel: 'Mostrar painel de execução no chat',
-      show_routing_debug: 'Mostrar detalhes de roteamento (debug)',
-      routing_debug_hint: 'Por padrão, o chat mostra só o agente e o modelo. O modo debug exibe o motivo do roteamento.',
-      skills_hint_open: 'Clique em uma habilidade para abrir em modo leitura.',
-      open_skill: 'Abrir habilidade',
-      run_skill: 'Executar',
-      edit: 'Editar',
-      saved: 'Salvo.',
-      failed_to_save: 'Falha ao salvar.',
-      save_error_title: 'Erro ao salvar',
-      save_error_body: 'Não foi possível salvar as habilidades. Tente novamente.',
-      invalid_json_title: 'JSON inválido',
-      invalid_json_body: 'Não foi possível salvar. Corrija o JSON e tente novamente.',
-      settings_load_error: 'Não foi possível carregar as configurações.',
-      provider_status_load_error: 'Não foi possível carregar o status dos providers.',
-      llm_key_remove_error: 'Não foi possível remover a chave.',
-      llm_settings_save_error: 'Não foi possível salvar as configurações de LLM.',
-      security_settings_save_error: 'Não foi possível salvar as configurações de segurança.',
-      automation_client_save_error: 'Não foi possível salvar o cliente de automação.',
-      automation_client_delete_error: 'Não foi possível remover o cliente de automação.',
-      automation_client_test_error: 'Não foi possível testar o cliente de automação.',
-      soul_save_error: 'Não foi possível salvar as informações do SOUL.',
-      soul_update_error: 'Não foi possível adicionar a atualização ao SOUL.',
-      ask_sabrina: 'Chame a Sabrina',
-      start_project: 'Iniciar projeto',
-      home: 'Tela inicial',
-      view_available_agents: 'Ver agentes disponíveis',
-      open_agents_in_settings: 'Ver agentes em configurações',
-      create_agent_assistant_message: 'Ok, vou te ajudar a criar um novo agente. Me explique o que você quer que ele faça.',
-      configure: 'Configurar',
-      agent_prompt: 'Prompt do agente',
-      agent_prompt_placeholder: 'Defina um prompt base (tom, limites, prioridades, contexto).',
-      agent_skills: 'Skills do agente',
-      default_skill: 'Skill padrão',
-      none: 'Nenhuma',
-      segment_system: 'System',
-      segment_admin: 'Administração',
-      segment_finance: 'Finanças',
-      segment_marketing: 'Marketing',
-      segment_it_devops: 'TI / DevOps',
-      segment_other: 'Outros',
-      sandbox_help_title: 'Segurança do agente',
-      sandbox_help_tooltip: 'Entenda o modo sandbox',
-      sandbox_help_body_off_title: 'Sandbox: OFF (desativado)',
-      sandbox_help_body_on_title: 'Sandbox: ON (ativado)',
-      sandbox_help_privacy_title: 'Importante sobre privacidade:',
-      sandbox_help_line_1: 'Modo sandbox define o quanto o agente pode interagir com o seu computador e com recursos externos.',
-      sandbox_help_off_1: 'Pode executar comandos no SO (quando permitido).',
-      sandbox_help_off_2: 'Pode escrever arquivos locais e gerar entregas/artefatos.',
-      sandbox_help_off_3: 'Pode usar conectores (GitHub/Drive/Calendar/Gmail etc.).',
-      sandbox_help_off_4: 'Pode fazer busca/ler links na web (quando permitido).',
-      sandbox_help_on_1: 'Bloqueia comandos no SO e escrita de arquivos (reduz risco de alterações locais).',
-      sandbox_help_on_2: 'Desabilita conectores e web retrieval (reduz exposição de dados a serviços externos).',
-      sandbox_help_on_3: 'Mantém apenas capacidades “de texto” (planejar, explicar, revisar, orientar).',
-      sandbox_help_privacy_1: 'Sandbox não impede que o texto que você envia seja encaminhado ao provider LLM configurado.',
-      sandbox_help_privacy_2: 'Para máxima privacidade de código, prefira LLM local e evite colar segredos.',
-      agent_security: 'Segurança do agente',
-      sandbox_mode: 'Modo sandbox',
-      allow_os_commands: 'Permitir comandos do sistema',
-      allow_file_write: 'Permitir escrita de arquivos',
-      allow_web_retrieval: 'Permitir consulta à web',
-      allow_connectors: 'Permitir conectores',
-      allow_system_profile: 'Permitir perfil do sistema',
-      security_caps_warning: 'Isso reduz a capacidade do agente de escrever e entregar código/artefatos locais.',
-      close: 'Fechar',
-      reset: 'Resetar',
-      off: 'Desativado',
-      on: 'Ativado',
-      last_updated: 'Atualizado em',
-      updating: 'Atualizando...',
-      update_profile: 'Atualizar perfil',
-      recommendations: 'Recomendações',
-      status_failed: 'Falhou',
-      doctor_diagnostics: 'Doctor (diagnóstico)',
-      doctor_all_ok: 'Tudo certo.',
-      doctor_some_attention: 'Há itens pendentes.',
-      doctor_click_run: 'Clique em “Rodar diagnóstico”.',
-      run_diagnostics: 'Rodar diagnóstico',
-      llm_settings_title: 'LLM (chave API ou local)',
-      mode: 'Modo',
-      server_default: 'Padrão do servidor',
-      api_cloud: 'API (nuvem)',
-      local_ollama: 'Local (Ollama)',
-      provider: 'Provider',
-      model: 'Modelo',
-      base_url: 'Base URL',
-      api_key: 'Chave API',
-      api_key_close: 'Fechar',
-      api_key_switch: 'Trocar chave',
-      api_key_register: 'Cadastrar chave',
-      api_key_placeholder: 'Cole sua chave aqui',
-      llm_api_key_hint_env: 'Chave disponível via .env (não salva no servidor). Para sobrescrever, clique em “Trocar chave”.',
-      llm_api_key_hint_saved: 'Chave cadastrada (não exibida). Para trocar, clique em “Trocar chave”.',
-      llm_api_key_hint_none: 'Nenhuma chave cadastrada. Clique em “Cadastrar chave”.',
-      llm_api_key_hint_storage: 'A chave fica salva de forma protegida no servidor local deste computador. Não aparece novamente depois de salvar.',
-      llm_api_key_warning_shared: 'Atenção: em um computador compartilhado, outras pessoas com acesso ao mesmo usuário do Windows podem usar este servidor local e consumir suas credenciais. Use perfis separados do SO.',
-      llm_key_from_env: 'Chave vem do .env',
-      llm_remove_key: 'Remover chave',
-      save_llm: 'Salvar LLM',
-      llm_saving: 'Salvando...',
-      configured_providers: 'Providers configurados',
-      provider_enabled: 'ativo',
-      provider_disabled: 'inativo',
-      provider_keys: 'chaves',
-      no_provider_status: 'Sem status disponível.',
-      automation_client_external: 'Cliente de automação (externo)',
-      automation_client_hint: 'Configure um serviço remoto de automação. O servidor armazenará credenciais localmente e o agente poderá usá-lo como conector.',
-      saved_keep: 'Salvo (deixe em branco para manter)',
-      paste_here: 'Cole aqui',
-      system_profile_local: 'Perfil do sistema (local)',
-      system_profile_hint_1: 'Esse perfil é coletado pelo servidor local (Windows/macOS/Linux) e fica disponível para evitar perguntas recorrentes do tipo “qual versão do seu sistema?”.',
-      system_profile_hint_2: 'Atenção: pode conter informações sensíveis (nome do computador, rede, etc.). Use “Remover” se preferir não armazenar.',
-      system_profile_feature_disabled: 'Funcionalidade desativada no servidor (OPENSLAP_SYSTEM_PROFILE=0).',
-      system_profile_disabled_by_security: 'Desativado pelas configurações de segurança do usuário.',
-      soul_user_profile: 'SOUL (perfil do usuário)',
-      name_label: 'Nome',
-      age_range_label: 'Faixa etária',
-      learning_style_label: 'Estilo de aprendizagem',
-      profile_language_label: 'Idioma',
-      audience_label: 'Público',
-      notes_label: 'Notas',
-      not_set: 'Não definido',
-      audience_youth: 'Jovem',
-      audience_adult: 'Adulto',
-      audience_mixed: 'Misto',
-      save_soul: 'Salvar SOUL',
-      soul_updates: 'Atualizações do SOUL',
-      add_update: 'Adicionar atualização',
-      soul_md_preview: 'Prévia do SOUL.md',
-      onboarding_title: '👋 Bem-vindo ao Open Slap!',
-      onboarding_intro: 'O Open Slap! é um workspace agêntico. Veja como começar rapidamente:',
-      onboarding_step_task_title: '➕ Nova tarefa',
-      onboarding_step_task_desc: 'Clique em “➕ Tarefa” no menu. A skill do CTO carrega automaticamente — descreva seu projeto e ela cria um plano estruturado.',
-      onboarding_step_skills_title: '🧠 Skills',
-      onboarding_step_skills_desc: 'Vá em Configurações → Central de habilidades para ver as skills (CTO, DevOps, SEO…). Clique em uma skill para abrir e executar.',
-      onboarding_step_connectors_title: '🔌 Conectores',
-      onboarding_step_connectors_desc: 'Vá em Configurações → Conectores para integrar GitHub, Google Calendar ou Gmail.',
-      onboarding_step_feedback_title: '👍 Feedback',
-      onboarding_step_feedback_desc: 'Avalie respostas do assistente com 👍/👎. Isso ajuda a calibrar o que é útil.',
-      onboarding_step_projects_title: '🗂️ Projetos',
-      onboarding_step_projects_desc: 'Crie um projeto em Configurações → Projetos para compartilhar contexto entre tarefas.',
-      onboarding_start_first_task: '🚀 Iniciar minha primeira tarefa',
-      onboarding_explore: 'Explorar por conta própria',
-      rename_title: 'Renomear',
-      running: 'Rodando...'
-    },
-    en: {
-      app_title: 'Open Slap! Agentic engine for makers',
-      connected: 'Connected',
-      disconnected: 'Disconnected',
-      settings: 'Settings',
-      sign_out: 'Sign out',
-      menu: 'MENU',
-      menu_expand: 'Expand menu',
-      menu_collapse: 'Collapse menu',
-      new_task: '➕ Task',
-      conversations: 'Conversations',
-      tasks: 'Tasks',
-      my_team: 'My team',
-      customize: 'Customize',
-      donate: 'Donations',
-      loading: 'Loading Open Slap!...',
-      clear: 'Clear',
-      new_conversation: '+ New conversation',
-      search_conversations_placeholder: 'Search conversations...',
-      no_conversations: 'No conversations yet.',
-      history_results: 'History results',
-      search_tasks_placeholder: 'Search tasks...',
-      no_tasks: 'No tasks yet.',
-      open_in_chat: 'Open in chat',
-      create_new_agent: '+ Create new agent',
-      connectors: 'Connectors',
-      connect: 'Connect',
-      disconnect: 'Disconnect',
-      test: 'Test',
-      connected_ok: 'Connected',
-      not_connected: 'Not connected',
-      save: 'Save',
-      remove: 'Remove',
-      cancel: 'Cancel',
-      confirm: 'Confirm',
-      language: 'Language',
-      connector_token_label: 'Token',
-      connector_token_placeholder: 'Paste the token here',
-      github_token_help: 'GitHub personal access token (classic or fine-grained).',
-      google_token_help: 'Google OAuth access token (Bearer).',
-      telegram_token_help: 'Telegram bot token. After connecting, click “Generate code” and send “/link YOUR_CODE” to the bot.',
-      telegram_link_code_title: 'Telegram — Link',
-      telegram_link_code_body_1: '1) In the app: Connectors → Telegram → Generate code',
-      telegram_link_code_body_2: '2) In Telegram: send to the bot: /link YOUR_CODE',
-      telegram_link_code_body_3: 'To disconnect: /unlink',
-      telegram_link_code_label: 'Code',
-      telegram_link_code_expires: 'Expires at',
-      generate_code: 'Generate code',
-      automation_client_help_tooltip: 'Understand automation client',
-      automation_client_help_title: 'Automation client (external)',
-      automation_client_help_body_1: 'This connector points to an external service (e.g., Tera) that runs automations outside Open Slap (browser, integrations, routines).',
-      automation_client_help_body_2: 'The agent calls this service via Base URL with an API key (Bearer). The /health endpoint is used for testing.',
-      automation_client_help_body_3: 'Example: Base URL = https://your-automator.com  |  Health check = GET https://your-automator.com/health',
-      success: 'Success',
-      error: 'Error',
-      back: 'Back',
-      donate_page_title: 'Donations',
-      remove_credential_question: 'Remove this credential?',
-      connector_validated: 'Connector validated.',
-      command_confirm_title: 'Confirm command execution',
-      executing: 'Executing...',
-      execute: 'Run',
-      decrease_font: 'Decrease font',
-      increase_font: 'Increase font',
-      by_title: 'By title',
-      no_history_results: 'No results in history.',
-      list_label: 'List',
-      in_progress: 'In progress',
-      completed: 'Done',
-      todos: 'TODOs',
-      add_todo: 'Add TODO',
-      todo_placeholder: 'Describe a TODO for this task…',
-      no_todos: 'No TODOs for this task.',
-      show_done: 'Show done',
-      hide_done: 'Hide done',
-      refresh: 'Refresh',
-      pending_items: 'pending',
-      done_items: 'done',
-      last: 'Last',
-      open: 'Open',
-      complete: 'Complete',
-      global_todo: 'Global TODO',
-      no_pending: 'No pending items.',
-      available_agents: 'Available agents',
-      no_agents: 'No agents available.',
-      chat: 'Chat',
-      conversation_label: 'Conversation',
-      task_label: 'Task',
-      search_chat_placeholder: 'Search chat...',
-      theme: 'Theme',
-      theme_deep_space: 'Deep Space',
-      theme_midnight_blue: 'Midnight Blue',
-      theme_forest: 'Forest',
-      theme_crimson: 'Crimson',
-      theme_slate: 'Slate',
-      theme_solarized: 'Solarized',
-      theme_light: 'Light',
-      theme_paper: 'Paper',
-      create_new_agent_prompt: 'Create a new agent. Ask questions to collect the necessary data (name, goal, skills, limits) and generate the agent package at the end.',
-      send: 'Send',
-      create_new_skill: 'Create new skill',
-      skills: 'Skills',
-      skills_center: 'Skills center',
-      llm_providers: 'LLM & Providers',
-      llm_free_keys_title: 'Free API keys',
-      llm_free_keys_body: 'If you don’t use paid providers or local LLMs, you can get one or more free API keys from the services below.',
-      llm_free_keys_gemini: 'Gemini',
-      llm_free_keys_groq: 'Groq',
-      llm_free_keys_openrouter: 'Open Router',
-      security: 'Security',
-      memory: 'Memory',
-      execution_transparency: 'Execution & transparency',
-      show_execution_panel: 'Show execution panel in chat',
-      show_routing_debug: 'Show routing details (debug)',
-      routing_debug_hint: 'By default, chat shows only agent and model. Debug mode shows routing rationale.',
-      skills_hint_open: 'Click a skill to open in read mode.',
-      open_skill: 'Open skill',
-      run_skill: 'Run',
-      edit: 'Edit',
-      saved: 'Saved.',
-      failed_to_save: 'Failed to save.',
-      save_error_title: 'Save error',
-      save_error_body: 'Could not save skills. Please try again.',
-      invalid_json_title: 'Invalid JSON',
-      invalid_json_body: 'Could not save. Fix the JSON and try again.',
-      settings_load_error: 'Could not load settings.',
-      provider_status_load_error: 'Could not load provider status.',
-      llm_key_remove_error: 'Could not remove the key.',
-      llm_settings_save_error: 'Could not save LLM settings.',
-      security_settings_save_error: 'Could not save security settings.',
-      automation_client_save_error: 'Could not save automation client.',
-      automation_client_delete_error: 'Could not delete automation client.',
-      automation_client_test_error: 'Could not test automation client.',
-      soul_save_error: 'Could not save SOUL information.',
-      soul_update_error: 'Could not add update to SOUL.',
-      ask_sabrina: 'Call Sabrina',
-      start_project: 'Start project',
-      home: 'Home',
-      view_available_agents: 'View available agents',
-      open_agents_in_settings: 'Open agents in settings',
-      create_agent_assistant_message: "Ok — I'll help you create a new agent. Tell me what you want it to do.",
-      configure: 'Configure',
-      agent_prompt: 'Agent prompt',
-      agent_prompt_placeholder: 'Define a base prompt (tone, limits, priorities, context).',
-      agent_skills: 'Agent skills',
-      default_skill: 'Default skill',
-      none: 'None',
-      segment_system: 'System',
-      segment_admin: 'Administration',
-      segment_finance: 'Finance',
-      segment_marketing: 'Marketing',
-      segment_it_devops: 'IT / DevOps',
-      segment_other: 'Other',
-      sandbox_help_title: 'Agent security',
-      sandbox_help_tooltip: 'Understand sandbox mode',
-      sandbox_help_body_off_title: 'Sandbox: OFF',
-      sandbox_help_body_on_title: 'Sandbox: ON',
-      sandbox_help_privacy_title: 'Privacy note:',
-      sandbox_help_line_1: 'Sandbox mode defines how much the agent can interact with your computer and external resources.',
-      sandbox_help_off_1: 'Can run OS commands (when allowed).',
-      sandbox_help_off_2: 'Can write local files and generate deliveries/artifacts.',
-      sandbox_help_off_3: 'Can use connectors (GitHub/Drive/Calendar/Gmail etc.).',
-      sandbox_help_off_4: 'Can browse/retrieve web content (when allowed).',
-      sandbox_help_on_1: 'Blocks OS commands and file writes (reduces local change risk).',
-      sandbox_help_on_2: 'Disables connectors and web retrieval (reduces exposure to external services).',
-      sandbox_help_on_3: 'Keeps “text-only” capabilities (plan, explain, review, guide).',
-      sandbox_help_privacy_1: 'Sandbox does not prevent the text you send from being forwarded to the configured LLM provider.',
-      sandbox_help_privacy_2: 'For maximum code privacy, prefer a local LLM and avoid pasting secrets.',
-      agent_security: 'Agent security',
-      sandbox_mode: 'Sandbox mode',
-      allow_os_commands: 'Allow OS commands',
-      allow_file_write: 'Allow file writing',
-      allow_web_retrieval: 'Allow web retrieval',
-      allow_connectors: 'Allow connectors',
-      allow_system_profile: 'Allow system profile',
-      security_caps_warning: 'This reduces the agent ability to write and deliver local code/artifacts.',
-      close: 'Close',
-      reset: 'Reset',
-      off: 'Off',
-      on: 'On',
-      last_updated: 'Last updated',
-      updating: 'Updating...',
-      update_profile: 'Update profile',
-      recommendations: 'Recommendations',
-      status_failed: 'Failed',
-      doctor_diagnostics: 'Doctor (diagnostics)',
-      doctor_all_ok: 'All systems OK.',
-      doctor_some_attention: 'Some items need attention.',
-      doctor_click_run: 'Click “Run diagnostics”.',
-      run_diagnostics: 'Run diagnostics',
-      llm_settings_title: 'LLM (API key or local)',
-      mode: 'Mode',
-      server_default: 'Server default',
-      api_cloud: 'API (cloud)',
-      local_ollama: 'Local (Ollama)',
-      provider: 'Provider',
-      model: 'Model',
-      base_url: 'Base URL',
-      api_key: 'API key',
-      api_key_close: 'Close',
-      api_key_switch: 'Change key',
-      api_key_register: 'Add key',
-      api_key_placeholder: 'Paste your key here',
-      llm_api_key_hint_env: 'Key available via .env (not saved on the server). To override, click “Change key”.',
-      llm_api_key_hint_saved: 'Key saved (not shown). To change, click “Change key”.',
-      llm_api_key_hint_none: 'No key saved. Click “Add key”.',
-      llm_api_key_hint_storage: 'The key is stored securely on this computer local server. It will not be shown again after saving.',
-      llm_api_key_warning_shared: 'Warning: on a shared computer, others with access to the same Windows user may use this local server and consume your credentials. Use separate OS profiles.',
-      llm_key_from_env: 'Key comes from .env',
-      llm_remove_key: 'Remove key',
-      save_llm: 'Save LLM',
-      llm_saving: 'Saving...',
-      configured_providers: 'Configured providers',
-      provider_enabled: 'enabled',
-      provider_disabled: 'disabled',
-      provider_keys: 'keys',
-      no_provider_status: 'No status available.',
-      automation_client_external: 'Automation client (external)',
-      automation_client_hint: 'Configure a remote automation service. The server will store credentials locally and the agent may use it as a connector.',
-      saved_keep: 'Saved (leave blank to keep)',
-      paste_here: 'Paste here',
-      system_profile_local: 'System profile (local)',
-      system_profile_hint_1: 'This profile is collected by the local server (Windows/macOS/Linux) and helps avoid recurring questions like “what OS version are you on?”.',
-      system_profile_hint_2: 'Warning: it may contain sensitive information (computer name, network, etc.). Use “Remove” if you prefer not to store it.',
-      system_profile_feature_disabled: 'Feature disabled on server (OPENSLAP_SYSTEM_PROFILE=0).',
-      system_profile_disabled_by_security: 'Disabled by user security settings.',
-      soul_user_profile: 'SOUL (user profile)',
-      name_label: 'Name',
-      age_range_label: 'Age range',
-      learning_style_label: 'Learning style',
-      profile_language_label: 'Language',
-      audience_label: 'Audience',
-      notes_label: 'Notes',
-      not_set: 'Not set',
-      audience_youth: 'Youth',
-      audience_adult: 'Adult',
-      audience_mixed: 'Mixed',
-      save_soul: 'Save SOUL',
-      soul_updates: 'SOUL updates',
-      add_update: 'Add update',
-      soul_md_preview: 'SOUL.md preview',
-      onboarding_title: '👋 Welcome to Open Slap!',
-      onboarding_intro: "Open Slap! is an agentic workspace. Here's how to get started quickly:",
-      onboarding_step_task_title: '➕ New task',
-      onboarding_step_task_desc: 'Click “➕ Task” in the sidebar. The CTO skill loads automatically — describe your project and it will create a structured plan.',
-      onboarding_step_skills_title: '🧠 Skills',
-      onboarding_step_skills_desc: 'Go to Settings → Skills center to see built-in skills (CTO, DevOps, SEO…). Click a skill to open and run it.',
-      onboarding_step_connectors_title: '🔌 Connectors',
-      onboarding_step_connectors_desc: 'Go to Settings → Connectors to link GitHub, Google Calendar or Gmail.',
-      onboarding_step_feedback_title: '👍 Feedback',
-      onboarding_step_feedback_desc: "Rate any assistant reply with 👍/👎. This helps the system learn what's useful.",
-      onboarding_step_projects_title: '🗂️ Projects',
-      onboarding_step_projects_desc: 'Create a project in Settings → Projects to share context across multiple tasks.',
-      onboarding_start_first_task: '🚀 Start my first task',
-      onboarding_explore: 'Explore on my own',
-      rename_title: 'Rename',
-      running: 'Running...'
-    },
-    es: {
-      app_title: 'Open Slap! Motor agéntico para makers',
-      connected: 'Conectado',
-      disconnected: 'Desconectado',
-      settings: 'Configuración',
-      sign_out: 'Salir',
-      menu: 'MENÚ',
-      menu_expand: 'Expandir menú',
-      menu_collapse: 'Contraer menú',
-      new_task: '➕ Tarea',
-      conversations: 'Conversaciones',
-      tasks: 'Tareas',
-      my_team: 'Mi equipo',
-      customize: 'Personalizar',
-      donate: 'Donaciones',
-      loading: 'Cargando Open Slap!...',
-      clear: 'Limpiar',
-      new_conversation: '+ Nueva conversación',
-      search_conversations_placeholder: 'Buscar conversaciones...',
-      no_conversations: 'Aún no hay conversaciones.',
-      history_results: 'Resultados en el historial',
-      search_tasks_placeholder: 'Buscar tareas...',
-      no_tasks: 'Aún no hay tareas.',
-      open_in_chat: 'Abrir en chat',
-      create_new_agent: '+ Crear nuevo agente',
-      connectors: 'Conectores',
-      connect: 'Conectar',
-      disconnect: 'Desconectar',
-      test: 'Probar',
-      connected_ok: 'Conectado',
-      not_connected: 'No conectado',
-      save: 'Guardar',
-      cancel: 'Cancelar',
-      confirm: 'Confirmar',
-      language: 'Idioma',
-      connector_token_label: 'Token',
-      connector_token_placeholder: 'Pega el token aquí',
-      github_token_help: 'Token de acceso personal de GitHub (classic o fine-grained).',
-      google_token_help: 'Token de acceso OAuth de Google (Bearer).',
-      telegram_token_help: 'Token del bot de Telegram. Después de conectar, haz clic en “Generar código” y envía “/link TU_CODIGO” al bot.',
-      telegram_link_code_title: 'Telegram — Vincular',
-      telegram_link_code_body_1: '1) En la app: Conectores → Telegram → Generar código',
-      telegram_link_code_body_2: '2) En Telegram: envía al bot: /link TU_CODIGO',
-      telegram_link_code_body_3: 'Para desconectar: /unlink',
-      telegram_link_code_label: 'Código',
-      telegram_link_code_expires: 'Expira en',
-      generate_code: 'Generar código',
-      automation_client_help_tooltip: 'Entender el cliente de automatización',
-      automation_client_help_title: 'Cliente de automatización (externo)',
-      automation_client_help_body_1: 'Este conector apunta a un servicio externo (p. ej., Tera) que ejecuta automatizaciones fuera de Open Slap (browser, integraciones, rutinas).',
-      automation_client_help_body_2: 'El agente llama a este servicio via Base URL con una API key (Bearer). El endpoint /health se usa para la prueba.',
-      automation_client_help_body_3: 'Ejemplo: Base URL = https://tu-automator.com  |  Health check = GET https://tu-automator.com/health',
-      success: 'Éxito',
-      error: 'Error',
-      back: 'Volver',
-      donate_page_title: 'Donaciones',
-      remove_credential_question: '¿Eliminar esta credencial?',
-      connector_validated: 'Conector validado.',
-      command_confirm_title: 'Confirmar ejecución de comando',
-      executing: 'Ejecutando...',
-      execute: 'Ejecutar',
-      decrease_font: 'Disminuir fuente',
-      increase_font: 'Aumentar fuente',
-      by_title: 'Por título',
-      no_history_results: 'No hay resultados en el historial.',
-      list_label: 'Lista',
-      in_progress: 'En progreso',
-      completed: 'Hecha',
-      todos: 'TODOs',
-      add_todo: 'Agregar TODO',
-      todo_placeholder: 'Describe un TODO para esta tarea…',
-      no_todos: 'No hay TODOs en esta tarea.',
-      show_done: 'Ver hechas',
-      hide_done: 'Ocultar hechas',
-      refresh: 'Actualizar',
-      pending_items: 'pendientes',
-      done_items: 'hechas',
-      last: 'Última',
-      open: 'Abrir',
-      complete: 'Completar',
-      global_todo: 'TODO global',
-      no_pending: 'No hay pendientes.',
-      available_agents: 'Agentes disponibles',
-      no_agents: 'No hay agentes disponibles.',
-      chat: 'Chat',
-      conversation_label: 'Conversación',
-      task_label: 'Tarea',
-      search_chat_placeholder: 'Buscar en el chat...',
-      theme: 'Tema',
-      theme_deep_space: 'Deep Space',
-      theme_midnight_blue: 'Midnight Blue',
-      theme_forest: 'Bosque',
-      theme_crimson: 'Carmesí',
-      theme_slate: 'Pizarra',
-      theme_solarized: 'Solarizado',
-      theme_light: 'Claro',
-      theme_paper: 'Papel',
-      create_new_agent_prompt: 'Crea un nuevo agente. Haz preguntas para recopilar los datos necesarios (nombre, objetivo, habilidades, límites) y genera el paquete del agente al final.',
-      send: 'Enviar',
-      create_new_skill: 'Crear nueva skill',
-      skills: 'Habilidades',
-      onboarding_title: '👋 ¡Bienvenido a Open Slap!',
-      onboarding_intro: 'Open Slap! es un workspace agéntico. Así puedes empezar rápidamente:',
-      onboarding_step_task_title: '➕ Nueva tarea',
-      onboarding_step_task_desc: 'Haz clic en “➕ Tarea” en el menú. La skill de CTO se carga automáticamente — describe tu proyecto y creará un plan estructurado.',
-      onboarding_step_skills_title: '🧠 Skills',
-      onboarding_step_skills_desc: 'Ve a Configuración → Central de habilidades para ver las skills (CTO, DevOps, SEO…). Haz clic en una skill para abrirla y ejecutarla.',
-      onboarding_step_connectors_title: '🔌 Conectores',
-      onboarding_step_connectors_desc: 'Ve a Configuración → Conectores para integrar GitHub, Google Calendar o Gmail.',
-      onboarding_step_feedback_title: '👍 Feedback',
-      onboarding_step_feedback_desc: 'Califica respuestas del asistente con 👍/👎. Esto ayuda a ajustar lo que es útil.',
-      onboarding_step_projects_title: '🗂️ Proyectos',
-      onboarding_step_projects_desc: 'Crea un proyecto en Configuración → Proyectos para compartir contexto entre tareas.',
-      onboarding_start_first_task: '🚀 Iniciar mi primera tarea',
-      onboarding_explore: 'Explorar por mi cuenta',
-      rename_title: 'Renombrar',
-      running: 'Ejecutando...'
-    },
-    ar: {
-      app_title: 'Open Slap! محرّك وكلائي للصنّاع',
-      connected: 'متصل',
-      disconnected: 'غير متصل',
-      settings: 'الإعدادات',
-      sign_out: 'تسجيل الخروج',
-      menu: 'القائمة',
-      menu_expand: 'توسيع القائمة',
-      menu_collapse: 'طيّ القائمة',
-      new_task: 'مهمة جديدة',
-      conversations: 'المحادثات',
-      tasks: 'المهام',
-      my_team: 'فريقي',
-      customize: 'تخصيص',
-      donate: 'تبرعات',
-      loading: 'جارٍ تحميل Open Slap!...',
-      clear: 'مسح',
-      new_conversation: '+ محادثة جديدة',
-      search_conversations_placeholder: 'بحث في المحادثات...',
-      no_conversations: 'لا توجد محادثات بعد.',
-      history_results: 'نتائج في السجل',
-      search_tasks_placeholder: 'بحث في المهام...',
-      no_tasks: 'لا توجد مهام بعد.',
-      open_in_chat: 'فتح في الدردشة',
-      create_new_agent: '+ إنشاء وكيل جديد',
-      connectors: 'الروابط',
-      connect: 'اتصال',
-      disconnect: 'قطع الاتصال',
-      test: 'اختبار',
-      connected_ok: 'متصل',
-      not_connected: 'غير متصل',
-      save: 'حفظ',
-      cancel: 'إلغاء',
-      confirm: 'تأكيد',
-      language: 'اللغة',
-      connector_token_label: 'رمز',
-      connector_token_placeholder: 'ألصق الرمز هنا',
-      github_token_help: 'رمز وصول شخصي من GitHub.',
-      google_token_help: 'رمز وصول OAuth من Google (Bearer).',
-      telegram_token_help: 'رمز بوت Telegram. بعد الاتصال اضغط “إنشاء رمز” ثم أرسل “/link YOUR_CODE” إلى البوت.',
-      telegram_link_code_title: 'Telegram — ربط',
-      telegram_link_code_body_1: '1) في التطبيق: الموصلات → Telegram → إنشاء رمز',
-      telegram_link_code_body_2: '2) في Telegram: أرسل إلى البوت: /link YOUR_CODE',
-      telegram_link_code_body_3: 'لإلغاء الربط: /unlink',
-      telegram_link_code_label: 'الرمز',
-      telegram_link_code_expires: 'ينتهي في',
-      generate_code: 'إنشاء رمز',
-      automation_client_help_tooltip: 'فهم عميل الأتمتة',
-      automation_client_help_title: 'عميل الأتمتة (خارجي)',
-      automation_client_help_body_1: 'هذا الموصل يشير إلى خدمة خارجية (مثل Tera) لتشغيل الأتمتة خارج Open Slap (متصفح، تكاملات، مهام).',
-      automation_client_help_body_2: 'يستدعي الوكيل هذه الخدمة عبر Base URL مع API key (Bearer). ويُستخدم المسار /health للاختبار.',
-      automation_client_help_body_3: 'مثال: Base URL = https://your-automator.com  |  Health check = GET https://your-automator.com/health',
-      success: 'تم',
-      error: 'خطأ',
-      back: 'رجوع',
-      donate_page_title: 'تبرعات',
-      remove_credential_question: 'هل تريد إزالة هذه البيانات؟',
-      connector_validated: 'تم التحقق من الرابط.',
-      command_confirm_title: 'تأكيد تنفيذ الأمر',
-      executing: 'جارٍ التنفيذ...',
-      execute: 'تنفيذ',
-      decrease_font: 'تصغير الخط',
-      increase_font: 'تكبير الخط',
-      by_title: 'حسب العنوان',
-      no_history_results: 'لا توجد نتائج في السجل.',
-      list_label: 'القائمة',
-      in_progress: 'قيد التنفيذ',
-      completed: 'مكتملة',
-      todos: 'المهام',
-      add_todo: 'إضافة مهمة',
-      todo_placeholder: 'اكتب مهمة لهذه المهمة…',
-      no_todos: 'لا توجد مهام لهذه المهمة.',
-      show_done: 'إظهار المكتملة',
-      hide_done: 'إخفاء المكتملة',
-      refresh: 'تحديث',
-      pending_items: 'قيد الانتظار',
-      done_items: 'منجزة',
-      last: 'الأخيرة',
-      open: 'فتح',
-      complete: 'إنهاء',
-      global_todo: 'TODO عام',
-      no_pending: 'لا توجد مهام معلّقة.',
-      available_agents: 'الوكلاء المتاحون',
-      no_agents: 'لا يوجد وكلاء متاحون.',
-      chat: 'الدردشة',
-      conversation_label: 'محادثة',
-      task_label: 'مهمة',
-      search_chat_placeholder: 'بحث في الدردشة...',
-      theme: 'السمة',
-      theme_deep_space: 'الفضاء العميق',
-      theme_midnight_blue: 'أزرق منتصف الليل',
-      theme_forest: 'الغابة',
-      theme_crimson: 'القرمزي',
-      theme_slate: 'الأردواز',
-      theme_solarized: 'شمسي',
-      theme_light: 'فاتح',
-      theme_paper: 'ورق',
-      create_new_agent_prompt: 'إنشاء وكيل جديد. اطرح أسئلة لجمع البيانات اللازمة (الاسم، الهدف، المهارات، الحدود) وقم بإنشاء حزمة الوكيل في النهاية.',
-      send: 'إرسال',
-      create_new_skill: 'إنشاء مهارة جديدة'
-    },
-    zh: {
-      app_title: 'Open Slap! 面向创作者的智能代理引擎',
-      connected: '已连接',
-      disconnected: '未连接',
-      settings: '设置',
-      sign_out: '退出',
-      menu: '菜单',
-      menu_expand: '展开菜单',
-      menu_collapse: '收起菜单',
-      new_task: '新任务',
-      conversations: '对话',
-      tasks: '任务',
-      my_team: '我的团队',
-      customize: '个性化',
-      donate: '捐赠',
-      loading: '正在加载 Open Slap!...',
-      clear: '清除',
-      new_conversation: '+ 新对话',
-      search_conversations_placeholder: '搜索对话...',
-      no_conversations: '暂无对话。',
-      history_results: '历史结果',
-      search_tasks_placeholder: '搜索任务...',
-      no_tasks: '暂无任务。',
-      open_in_chat: '在聊天中打开',
-      create_new_agent: '+ 创建新代理',
-      connectors: '连接器',
-      connect: '连接',
-      disconnect: '断开',
-      test: '测试',
-      connected_ok: '已连接',
-      not_connected: '未连接',
-      save: '保存',
-      cancel: '取消',
-      confirm: '确认',
-      language: '语言',
-      connector_token_label: '令牌',
-      connector_token_placeholder: '在此粘贴令牌',
-      github_token_help: 'GitHub 个人访问令牌。',
-      google_token_help: 'Google OAuth 访问令牌（Bearer）。',
-      telegram_token_help: 'Telegram 机器人令牌。连接后点击“生成代码”，然后给机器人发送“/link YOUR_CODE”。',
-      telegram_link_code_title: 'Telegram — 绑定',
-      telegram_link_code_body_1: '1) 在应用中：连接器 → Telegram → 生成代码',
-      telegram_link_code_body_2: '2) 在 Telegram：发送给机器人：/link YOUR_CODE',
-      telegram_link_code_body_3: '解除绑定：/unlink',
-      telegram_link_code_label: '代码',
-      telegram_link_code_expires: '过期时间',
-      generate_code: '生成代码',
-      automation_client_help_tooltip: '了解自动化客户端',
-      automation_client_help_title: '自动化客户端（外部）',
-      automation_client_help_body_1: '此连接器指向外部服务（例如 Tera），在 Open Slap 之外运行自动化（浏览器、集成、流程）。',
-      automation_client_help_body_2: '代理会通过 Base URL + API key（Bearer）调用该服务；/health 用于测试。',
-      automation_client_help_body_3: '示例：Base URL = https://your-automator.com  |  Health check = GET https://your-automator.com/health',
-      success: '成功',
-      error: '错误',
-      back: '返回',
-      donate_page_title: '捐赠',
-      remove_credential_question: '移除此凭证？',
-      connector_validated: '连接器已验证。',
-      command_confirm_title: '确认执行命令',
-      executing: '正在执行...',
-      execute: '执行',
-      decrease_font: '减小字号',
-      increase_font: '增大字号',
-      by_title: '按标题',
-      no_history_results: '历史中没有结果。',
-      list_label: '列表',
-      in_progress: '进行中',
-      completed: '已完成',
-      todos: 'TODOs',
-      add_todo: '添加 TODO',
-      todo_placeholder: '为此任务写一个 TODO…',
-      no_todos: '此任务暂无 TODO。',
-      show_done: '显示已完成',
-      hide_done: '隐藏已完成',
-      refresh: '刷新',
-      pending_items: '待办',
-      done_items: '已完成',
-      last: '最后',
-      open: '打开',
-      complete: '完成',
-      global_todo: '全局 TODO',
-      no_pending: '暂无待办。',
-      available_agents: '可用代理',
-      no_agents: '暂无可用代理。',
-      chat: '聊天',
-      conversation_label: '对话',
-      task_label: '任务',
-      search_chat_placeholder: '搜索聊天...',
-      theme: '主题',
-      theme_deep_space: '深空',
-      theme_midnight_blue: '午夜蓝',
-      theme_forest: '森林',
-      theme_crimson: '深红',
-      theme_slate: '石板',
-      theme_solarized: '日光化',
-      theme_light: '明亮',
-      theme_paper: '纸张',
-      create_new_agent_prompt: '创建一个新代理。提出问题以收集必要的数据（名称，目标，技能，限制），并在最后生成代理包。',
-      send: '发送',
-      create_new_skill: '创建新技能'
-    }
-  };
-
-  useEffect(() => {
-    streamingRef.current = Boolean(streaming);
-  }, [streaming]);
   const t = (key) => {
-    const table = translations[lang] || translations.pt;
-    return table[key] || translations.pt[key] || key;
+    const table = translations[lang] || translations.en || translations.pt;
+    return table[key] || (translations.en && translations.en[key]) || translations.pt[key] || key;
+  };
+  const getDoctorLabel = (check) => {
+    const id = String(check?.id || '').trim();
+    if (!id) return check?.label || '';
+    const k = `doctor_check_${id}`;
+    const v = t(k);
+    return v === k ? (check?.label || id) : v;
+  };
+  const getBootGreeting = () => {
+    const h = new Date().getHours();
+    const key = h < 12 ? 'boot_greeting_morning' : (h < 18 ? 'boot_greeting_afternoon' : 'boot_greeting_evening');
+    const base = t(key);
+    const candidates = [
+      String(soulData?.name || '').trim(),
+      String(soulData?.full_name || '').trim(),
+      String(soulData?.user_name || '').trim(),
+      (() => {
+        const em = String(user?.email || '').trim();
+        return em.includes('@') ? em.split('@')[0] : '';
+      })()
+    ].filter(Boolean);
+    const name = candidates.length ? candidates[0] : '';
+    return `${base}${name ? `, ${name}` : ''}.`;
+  };
+  const renderBootScreen = () => {
+    const greeting = getBootGreeting();
+    const recentConversations = (conversations || [])
+      .slice()
+      .sort((a, b) => {
+        const ta = new Date(a?.updated_at || a?.created_at || 0).getTime();
+        const tb = new Date(b?.updated_at || b?.created_at || 0).getTime();
+        return tb - ta;
+      })
+      .slice(0, 3);
+    const asciiWithVersion = (() => {
+      try {
+        return OPEN_SLAP_ASCII.replace('open_slap > boot', `open_slap > boot #${OPEN_SLAP_VERSION}#`);
+      } catch {
+        return OPEN_SLAP_ASCII;
+      }
+    })();
+    return (
+      <div style={{ maxWidth: '920px', width: '100%', margin: '0 auto' }}>
+        <div style={{ ...styles.lightCard, border: '1px solid rgba(255,255,255,0.10)' }}>
+          <pre
+            style={{
+              fontFamily: OPEN_SLAP_ASCII_FONT,
+              fontSize: isMobile ? '10px' : '12px',
+              lineHeight: 1.35,
+              whiteSpace: 'pre',
+              fontVariantLigatures: 'none',
+              letterSpacing: '0',
+              color: 'var(--text)',
+              opacity: 0.95,
+              overflowX: 'auto',
+              maxWidth: '100%',
+              width: '100%',
+              margin: 0
+            }}
+          >
+            {asciiWithVersion}
+          </pre>
+        </div>
+        <div style={{ marginTop: '28px', fontSize: '18px', fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--sans)' }}>
+          {greeting}
+        </div>
+        <input
+          style={{ ...styles.chatSearchInput, width: '100%', marginTop: '24px' }}
+          value={bootInput}
+          onChange={(e) => setBootInput(e.target.value)}
+          placeholder={t('boot_input_placeholder')}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return;
+            const content = String(bootInput || '').trim();
+            if (!content) return;
+            setBootInput('');
+            startNewConversationWithPrompt(content);
+          }}
+        />
+        {recentConversations.length ? (
+          <div style={{ ...styles.lightCard, marginTop: '18px' }}>
+            <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+              {t('conversations')} • {t('last')} 3
+            </div>
+            <div style={{ display: 'grid', gap: '8px', marginTop: '10px' }}>
+              {recentConversations.map((conv) => (
+                <div
+                  key={conv.id}
+                  style={styles.conversationItem}
+                  onClick={() => loadConversation(conv.id, conv.session_id, 'conversation')}
+                >
+                  <div style={{ ...styles.conversationTitle, marginBottom: 0 }}>
+                    {String(conv?.title || '').trim() || `${t('conversation_label')} ${String(conv?.id || '').slice(0, 8)}`}
+                  </div>
+                  <div style={styles.conversationMeta}>
+                    {formatCompactDateTime(conv.updated_at || conv.created_at)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
   };
   const segmentOrder = ['system', 'admin', 'finance', 'marketing', 'it_devops', 'other'];
   const getSkillSegmentId = (skill) => {
@@ -1200,709 +503,31 @@ const App = () => {
     document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
   }, [lang]);
   const formatCompactDateTime = (value) => {
-    const d = value ? new Date(value) : null;
+    const parseSqliteTimestampUtc = (raw) => {
+      const s = String(raw || '').trim();
+      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+      if (!m) return null;
+      const year = Number(m[1]);
+      const month = Number(m[2]);
+      const day = Number(m[3]);
+      const hour = Number(m[4]);
+      const minute = Number(m[5]);
+      const second = Number(m[6] || '0');
+      if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+      return new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+    };
+    const d =
+      value && typeof value === 'string' && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(value)
+        ? parseSqliteTimestampUtc(value)
+        : value
+          ? new Date(value)
+          : null;
     if (!d || Number.isNaN(d.getTime())) return '';
     return d.toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
   };
   const getMessageTimestamp = (message) => message?.created_at || message?.createdAt || message?.timestamp || message?.time || '';
 
-  // Estilos conforme WINDSURF_AGENT.md
-  const styles = {
-    app: {
-      height: '100vh',
-      background: 'var(--bg)',
-      color: 'var(--text)',
-      fontFamily: 'var(--sans)',
-      display: 'flex',
-      flexDirection: 'column'
-    },
-    header: {
-      background: 'var(--bg2)',
-      borderBottom: '1px solid var(--border)',
-      padding: '16px 24px',
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center'
-    },
-    headerTitle: {
-      fontSize: '16px',
-      fontWeight: '600',
-      color: 'var(--text)',
-      fontFamily: 'var(--sans)',
-      lineHeight: '1.2',
-      maxWidth: '520px'
-    },
-    headerRight: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '16px'
-    },
-    iconButton: {
-      background: 'transparent',
-      border: '1px solid var(--border)',
-      borderRadius: '6px',
-      width: '36px',
-      height: '36px',
-      color: 'var(--text)',
-      fontSize: '16px',
-      cursor: 'pointer',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      transition: 'all 0.15s'
-    },
-    connectionStatus: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      fontSize: '12px',
-      fontFamily: 'var(--mono)',
-      color: connected ? 'var(--green)' : 'var(--red)'
-    },
-    connectionDot: {
-      width: '8px',
-      height: '8px',
-      borderRadius: '50%',
-      background: connected ? 'var(--green)' : 'var(--red)'
-    },
-    userButton: {
-      background: 'transparent',
-      border: '1px solid var(--border)',
-      borderRadius: '6px',
-      padding: '8px 12px',
-      color: 'var(--text)',
-      fontSize: '12px',
-      fontFamily: 'var(--mono)',
-      cursor: 'pointer',
-      transition: 'all 0.15s'
-    },
-    main: {
-      flex: 1,
-      display: 'flex',
-      overflow: 'hidden'
-    },
-    sidebar: {
-      width: '220px',
-      background: 'var(--bg2)',
-      borderRight: '1px solid var(--border)',
-      display: 'flex',
-      flexDirection: 'column',
-      minHeight: 0
-    },
-    sidebarContent: {
-      flex: 1,
-      minHeight: 0,
-      overflowY: 'auto'
-    },
-    sidebarSection: {
-      padding: '16px',
-      borderBottom: '1px solid var(--border)'
-    },
-    sidebarTitle: {
-      fontSize: '10px',
-      letterSpacing: '2',
-      textTransform: 'uppercase',
-      color: 'var(--text-dim)',
-      fontFamily: 'var(--mono)',
-      marginBottom: '12px'
-    },
-    sidebarButton: {
-      background: 'transparent',
-      border: '1px solid transparent',
-      borderRadius: '6px',
-      padding: '10px 12px',
-      color: 'var(--text)',
-      fontSize: '12px',
-      fontFamily: 'var(--mono)',
-      cursor: 'pointer',
-      transition: 'all 0.15s',
-      width: '100%',
-      textAlign: 'left',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px'
-    },
-    sidebarButtonHover: {
-      background: 'rgba(245, 166, 35, 0.08)',
-      borderColor: 'rgba(245, 166, 35, 0.18)'
-    },
-    sidebarButtonActive: {
-      background: 'rgba(245, 166, 35, 0.10)',
-      borderColor: 'rgba(245, 166, 35, 0.35)',
-      color: 'var(--text-bright)'
-    },
-    sidebarFooter: {
-      padding: '16px',
-      borderTop: '1px solid var(--border)',
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center'
-    },
-    sidebarBottom: {
-      marginTop: 'auto',
-      display: 'flex',
-      flexDirection: 'column'
-    },
-    sidebarDonateArea: {
-      padding: '16px',
-      display: 'grid',
-      gap: '10px'
-    },
-    sidebarLogo: {
-      width: '100%',
-      maxWidth: '300px',
-      maxHeight: '160px',
-      height: 'auto',
-      display: 'block',
-      objectFit: 'contain',
-      alignSelf: 'center'
-    },
-    conversationList: {
-      flex: 1,
-      overflow: 'auto',
-      padding: '8px'
-    },
-    conversationItem: {
-      background: 'var(--bg3)',
-      border: '1px solid var(--border)',
-      borderRadius: '6px',
-      padding: '12px',
-      marginBottom: '8px',
-      cursor: 'pointer',
-      transition: 'all 0.15s'
-    },
-    todoItem: {
-      background: 'var(--bg3)',
-      border: '1px solid rgba(255,255,255,0.08)',
-      borderRadius: '10px',
-      padding: '12px',
-      transition: 'all 0.15s'
-    },
-    todoCheck: {
-      width: '22px',
-      height: '22px',
-      borderRadius: '6px',
-      border: '1px solid rgba(255,255,255,0.18)',
-      background: 'rgba(255,255,255,0.04)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      color: 'var(--text-dim)',
-      fontSize: '14px',
-      flex: '0 0 auto'
-    },
-    conversationItemActive: {
-      borderColor: 'var(--amber)',
-      background: 'rgba(245, 166, 35, 0.1)'
-    },
-    conversationTitle: {
-      fontSize: '14px',
-      fontWeight: '500',
-      color: 'var(--text)',
-      marginBottom: '4px',
-      fontFamily: 'var(--sans)'
-    },
-    conversationMeta: {
-      fontSize: '11px',
-      color: 'var(--text-dim)',
-      fontFamily: 'var(--mono)'
-    },
-    newConversationButton: {
-      background: 'var(--amber)',
-      border: 'none',
-      borderRadius: '6px',
-      padding: '10px 16px',
-      color: 'var(--bg)',
-      fontSize: '12px',
-      fontWeight: '600',
-      fontFamily: 'var(--mono)',
-      cursor: 'pointer',
-      transition: 'all 0.15s',
-      width: '100%'
-    },
-    chatArea: {
-      flex: 1,
-      display: 'flex',
-      flexDirection: 'column'
-    },
-    chatToolbar: {
-      padding: '12px 24px',
-      borderBottom: '1px solid var(--border)',
-      background: 'var(--bg2)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: '12px'
-    },
-    toolbarTitleRow: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '10px',
-      minWidth: 0
-    },
-    toolbarTitleText: {
-      fontFamily: 'var(--mono)',
-      fontSize: '12px',
-      color: 'var(--text-dim)',
-      whiteSpace: 'nowrap',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis'
-    },
-    chatSearchInput: {
-      width: '320px',
-      background: 'var(--bg3)',
-      border: '1px solid var(--border)',
-      borderRadius: '8px',
-      padding: '10px 12px',
-      fontSize: '12px',
-      color: 'var(--text-bright)',
-      fontFamily: 'var(--mono)',
-      outline: 'none'
-    },
-    chatSearchClear: {
-      background: 'transparent',
-      border: '1px solid var(--border)',
-      borderRadius: '8px',
-      padding: '10px 12px',
-      color: 'var(--text)',
-      fontSize: '12px',
-      fontFamily: 'var(--mono)',
-      cursor: 'pointer'
-    },
-    smallIconButton: {
-      background: 'transparent',
-      border: '1px solid var(--border)',
-      borderRadius: '8px',
-      width: '34px',
-      height: '34px',
-      color: 'var(--text)',
-      fontSize: '14px',
-      cursor: 'pointer',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center'
-    },
-    listTwoCols: {
-      display: 'grid',
-      gridTemplateColumns: '1.2fr 0.8fr',
-      gap: '12px'
-    },
-    lightCard: {
-      background: 'rgba(255,255,255,0.06)',
-      border: '1px solid rgba(255,255,255,0.10)',
-      borderRadius: '12px',
-      padding: '12px'
-    },
-    skillGrid: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-      gap: '10px'
-    },
-    skillCard: {
-      background: 'rgba(255,255,255,0.06)',
-      border: '1px solid rgba(255,255,255,0.10)',
-      borderRadius: '12px',
-      padding: '12px',
-      cursor: 'pointer'
-    },
-    skillName: {
-      fontSize: '13px',
-      color: 'var(--text)',
-      fontFamily: 'var(--sans)',
-      fontWeight: 600
-    },
-    skillDesc: {
-      marginTop: '6px',
-      fontSize: '12px',
-      color: 'var(--text-dim)',
-      fontFamily: 'var(--mono)',
-      lineHeight: 1.5
-    },
-    connectorGrid: {
-      marginTop: '10px',
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-      gap: '10px'
-    },
-    connectorCard: {
-      background: 'rgba(0,0,0,0.18)',
-      border: '1px solid rgba(255,255,255,0.10)',
-      borderRadius: '12px',
-      padding: '12px',
-      display: 'grid',
-      gap: '10px'
-    },
-    connectorRow: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      gap: '10px'
-    },
-    connectorTitle: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      minWidth: 0
-    },
-    connectorDot: {
-      width: '10px',
-      height: '10px',
-      borderRadius: '50%',
-      background: 'var(--red)',
-      flex: '0 0 auto'
-    },
-    monoTextarea: {
-      width: '100%',
-      minHeight: '320px',
-      background: 'var(--bg3)',
-      border: '1px solid var(--border)',
-      borderRadius: '12px',
-      padding: '12px',
-      color: 'var(--text)',
-      fontSize: '12px',
-      fontFamily: 'var(--mono)',
-      outline: 'none',
-      resize: 'vertical'
-    },
-    messagesContainer: {
-      flex: 1,
-      overflow: 'auto',
-      padding: '24px'
-    },
-    message: {
-      marginBottom: '24px',
-      display: 'flex',
-      gap: '12px'
-    },
-    messageUser: {
-      flexDirection: 'row-reverse'
-    },
-    messageAvatar: {
-      width: '32px',
-      height: '32px',
-      borderRadius: '6px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontSize: '16px',
-      flexShrink: 0
-    },
-    messageAvatarImg: {
-      width: '100%',
-      height: '100%',
-      objectFit: 'cover',
-      borderRadius: '6px',
-      display: 'block'
-    },
-    messageContent: {
-      flex: 1,
-      maxWidth: '600px'
-    },
-    messageBubble: {
-      background: 'var(--bg3)',
-      border: '1px solid var(--border)',
-      borderRadius: '12px',
-      padding: '12px 16px',
-      fontSize: '14px',
-      lineHeight: '1.6',
-      fontFamily: 'var(--sans)',
-      whiteSpace: 'pre-wrap'
-    },
-    messageBubbleUser: {
-      background: 'var(--amber)',
-      color: 'var(--bg)',
-      borderColor: 'var(--amber)'
-    },
-    messageTimestamp: {
-      marginTop: '6px',
-      fontSize: '11px',
-      fontFamily: 'var(--mono)',
-      color: 'var(--text-dim)'
-    },
-    expertTag: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: '6px',
-      background: 'var(--bg2)',
-      border: '1px solid var(--border)',
-      borderRadius: '16px',
-      padding: '4px 8px',
-      fontSize: '11px',
-      fontFamily: 'var(--mono)',
-      color: 'var(--text-dim)',
-      marginTop: '8px'
-    },
-    expertIcon: {
-      fontSize: '12px'
-    },
-    inputArea: {
-      padding: '16px 24px',
-      borderTop: '1px solid var(--border)',
-      background: 'var(--bg2)'
-    },
-    inputContainer: {
-      display: 'flex',
-      gap: '12px',
-      alignItems: 'flex-end'
-    },
-    inputWrapper: {
-      flex: 1
-    },
-    input: {
-      width: '100%',
-      background: 'var(--bg3)',
-      border: '1px solid var(--border)',
-      borderRadius: '8px',
-      padding: '12px 16px',
-      fontSize: '14px',
-      color: 'var(--text-bright)',
-      fontFamily: 'var(--sans)',
-      outline: 'none',
-      resize: 'none',
-      minHeight: '48px',
-      maxHeight: '200px'
-    },
-    sendButton: {
-      background: 'var(--amber)',
-      border: 'none',
-      borderRadius: '8px',
-      padding: '12px 20px',
-      color: 'var(--bg)',
-      fontSize: '14px',
-      fontWeight: '600',
-      fontFamily: 'var(--mono)',
-      cursor: 'pointer',
-      transition: 'all 0.15s',
-      height: '48px'
-    },
-    sendButtonDisabled: {
-      opacity: 0.6,
-      cursor: 'not-allowed'
-    },
-    loadingScreen: {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      height: '100vh',
-      background: 'var(--bg)',
-      color: 'var(--text)',
-      fontFamily: 'var(--sans)'
-    },
-    centerPanel: {
-      flex: 1,
-      overflow: 'auto',
-      padding: '24px'
-    },
-    centerPanelTitle: {
-      fontSize: '14px',
-      fontWeight: '600',
-      fontFamily: 'var(--mono)',
-      color: 'var(--text)',
-      marginBottom: '16px'
-    },
-    emptyState: {
-      background: 'var(--bg3)',
-      border: '1px solid var(--border)',
-      borderRadius: '10px',
-      padding: '16px',
-      color: 'var(--text-dim)',
-      fontFamily: 'var(--sans)'
-    },
-    settingsSection: {
-      background: 'var(--bg3)',
-      border: '1px solid var(--border)',
-      borderRadius: '10px',
-      padding: '16px',
-      marginBottom: '16px'
-    },
-    settingsSectionTitle: {
-      fontSize: '12px',
-      fontFamily: 'var(--mono)',
-      color: 'var(--text)',
-      marginBottom: '12px'
-    },
-    settingsGrid: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
-      gap: '12px'
-    },
-    settingsField: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '6px'
-    },
-    settingsLabel: {
-      fontSize: '11px',
-      color: 'var(--text-dim)',
-      fontFamily: 'var(--mono)'
-    },
-    settingsInput: {
-      width: '100%',
-      background: 'var(--bg2)',
-      border: '1px solid var(--border)',
-      borderRadius: '8px',
-      padding: '10px 12px',
-      fontSize: '12px',
-      color: 'var(--text-bright)',
-      fontFamily: 'var(--mono)',
-      outline: 'none'
-    },
-    settingsTextarea: {
-      width: '100%',
-      background: 'var(--bg2)',
-      border: '1px solid var(--border)',
-      borderRadius: '8px',
-      padding: '10px 12px',
-      fontSize: '12px',
-      color: 'var(--text-bright)',
-      fontFamily: 'var(--mono)',
-      outline: 'none',
-      resize: 'vertical',
-      minHeight: '90px'
-    },
-    settingsActions: {
-      display: 'flex',
-      gap: '10px',
-      justifyContent: 'flex-end',
-      marginTop: '12px'
-    },
-    settingsPrimaryButton: {
-      background: 'var(--amber)',
-      border: 'none',
-      borderRadius: '8px',
-      padding: '10px 14px',
-      color: 'var(--bg)',
-      fontSize: '12px',
-      fontWeight: '600',
-      fontFamily: 'var(--mono)',
-      cursor: 'pointer'
-    },
-    settingsSecondaryButton: {
-      background: 'transparent',
-      border: '1px solid var(--border)',
-      borderRadius: '8px',
-      padding: '10px 14px',
-      color: 'var(--text)',
-      fontSize: '12px',
-      fontFamily: 'var(--mono)',
-      cursor: 'pointer'
-    },
-    settingsHint: {
-      fontSize: '11px',
-      color: 'var(--text-dim)',
-      fontFamily: 'var(--sans)',
-      marginTop: '8px'
-    },
-    settingsError: {
-      background: 'rgba(248, 113, 113, 0.12)',
-      border: '1px solid rgba(248, 113, 113, 0.4)',
-      borderRadius: '10px',
-      padding: '12px',
-      color: 'var(--text)',
-      fontFamily: 'var(--sans)',
-      marginBottom: '16px'
-    },
-    doctorCard: {
-      background: 'var(--bg3)',
-      border: '1px solid var(--border)',
-      borderRadius: '10px',
-      padding: '14px',
-      marginBottom: '16px'
-    },
-    doctorRow: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      gap: '12px',
-      alignItems: 'flex-start',
-      padding: '8px 0',
-      borderBottom: '1px solid rgba(255,255,255,0.06)'
-    },
-    doctorRowLast: {
-      borderBottom: 'none'
-    },
-    doctorLabel: {
-      fontSize: '12px',
-      color: 'var(--text)',
-      fontFamily: 'var(--sans)'
-    },
-    doctorDetail: {
-      fontSize: '11px',
-      color: 'var(--text-dim)',
-      fontFamily: 'var(--mono)',
-      marginTop: '4px'
-    },
-    doctorStatus: {
-      fontSize: '11px',
-      fontFamily: 'var(--mono)',
-      padding: '4px 8px',
-      borderRadius: '999px',
-      border: '1px solid var(--border)',
-      whiteSpace: 'nowrap'
-    },
-    commandCard: {
-      marginTop: '10px',
-      border: '1px solid rgba(245, 166, 35, 0.35)',
-      background: 'rgba(245, 166, 35, 0.08)',
-      borderRadius: '8px',
-      padding: '12px'
-    },
-    commandTitle: {
-      fontSize: '12px',
-      fontWeight: '600',
-      color: 'var(--text)',
-      fontFamily: 'var(--sans)'
-    },
-    commandMeta: {
-      marginTop: '6px',
-      fontSize: '11px',
-      color: 'var(--text-dim)',
-      fontFamily: 'var(--mono)',
-      whiteSpace: 'pre-wrap'
-    },
-    commandActions: {
-      marginTop: '10px',
-      display: 'flex',
-      gap: '10px',
-      alignItems: 'center'
-    },
-    modalOverlay: {
-      position: 'fixed',
-      inset: 0,
-      background: 'rgba(0,0,0,0.55)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 9999,
-      padding: '24px'
-    },
-    modal: {
-      width: '100%',
-      maxWidth: '640px',
-      borderRadius: '10px',
-      border: '1px solid var(--border)',
-      background: 'var(--bg2)',
-      padding: '16px'
-    },
-    modalHeader: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      gap: '12px'
-    },
-    modalTitle: {
-      fontSize: '14px',
-      fontWeight: '600',
-      color: 'var(--text)',
-      fontFamily: 'var(--sans)'
-    },
-    modalBody: {
-      marginTop: '12px',
-      fontSize: '12px',
-      color: 'var(--text)',
-      fontFamily: 'var(--sans)',
-      whiteSpace: 'pre-wrap'
-    }
-  };
+  const styles = buildAppAuthStyles({ connected });
 
   const openCliArtifact = async (artifact) => {
     const url = String(artifact?.url || '').trim();
@@ -2125,7 +750,7 @@ const App = () => {
     return out;
   };
 
-  const MessageBlock = ({ block, onApprovePlan }) => {
+  const MessageBlock = ({ block, onApprovePlan, planUi }) => {
     const [collapsed, setCollapsed] = React.useState(true);
 
     if (block?.type === 'thinking') {
@@ -2180,6 +805,13 @@ const App = () => {
 
     if (block?.type === 'plan') {
       const tasks = parsePlanTasksFromText(block.content || '');
+      const isRunning = Boolean(planUi?.running);
+      const isApproved = Boolean(planUi?.approved);
+      const approveLabel = isRunning
+        ? (lang === 'pt' ? 'Executando…' : 'Running…')
+        : isApproved
+          ? (lang === 'pt' ? 'Aprovado' : 'Approved')
+          : (lang === 'pt' ? 'Aprovar' : 'Approve');
       return (
         <div style={{
           border: '1px solid rgba(245,166,35,0.35)',
@@ -2201,9 +833,9 @@ const App = () => {
               <button
                 style={{ ...styles.settingsPrimaryButton, padding: '6px 10px', fontSize: '11px' }}
                 onClick={() => onApprovePlan?.(tasks)}
-                disabled={!tasks.length}
+                disabled={!tasks.length || isRunning || isApproved}
               >
-                Aprovar
+                {approveLabel}
               </button>
             </div>
           </div>
@@ -2355,6 +987,33 @@ const App = () => {
     }
   };
 
+  const autoApprovePendingCommand = async (req) => {
+    if (!req?.id) return false;
+    try {
+      const headers = getAuthHeaders();
+      if (!headers.Authorization) return false;
+      const res = await fetch(`/api/commands/pending/${encodeURIComponent(req.id)}/autoapprove`, {
+        method: 'POST',
+        headers
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.detail || 'Failed to auto-approve command.');
+      }
+      return true;
+    } catch (e) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `❌ ${e?.message || String(e)}`,
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`
+        }
+      ]);
+      return false;
+    }
+  };
+
   const createTaskWithPrefill = async (prefill, autoSend = false) => {
     await createNewTask();
     setInput(String(prefill || ''));
@@ -2457,361 +1116,7 @@ const App = () => {
   }, [theme]);
 
   useEffect(() => {
-    const defaults = [
-      // ── Strategic ────────────────────────────────────────────────────────────
-      {
-        id: 'cto',
-        name: 'CTO',
-        description: 'Discusses, analyses, evaluates, plans and orchestrates. Activates plan→build mode for complex projects.',
-        content: {
-          role: 'Chief Technology Officer',
-          mode: 'plan→build',
-          focus: ['architecture', 'trade-offs', 'roadmap', 'team coordination', 'risk'],
-          prompt:
-            'Você é o CTO — Arquiteto de Soluções.\n' +
-            'Regra de Ouro: NUNCA forneça uma linha de código sem antes apresentar um Documento de Design Técnico (TDD) e obter aprovação explícita.\n' +
-            'Regra de credenciais: NUNCA solicite chaves de API ou secrets no chat. Se precisar de credenciais, direcione para Settings → LLM (token: [[open_settings:llm_api_key]]).\n' +
-            'Fluxo obrigatório: PLAN → DELEGATE → BUILD.\n\n' +
-            'PLAN:\n' +
-            '- Faça 3–7 perguntas objetivas para esclarecer: objetivo de negócio, usuários, escopo, restrições, prazo, integrações, dados sensíveis e escala.\n' +
-            '- Depois gere um TDD em Markdown com:\n' +
-            '  1) Objetivo de Negócio\n' +
-            '  2) Premissas\n' +
-            '  3) Escopo e Não-Objetivos\n' +
-            '  4) Arquitetura proposta (diagrama em Mermaid)\n' +
-            '  5) Stack (Backend/Frontend/Infra)\n' +
-            '  6) Contratos (APIs e dados em alto nível)\n' +
-            '  7) Segurança e Privacidade (LGPD/GDPR quando aplicável)\n' +
-            '  8) Observabilidade (logs/métricas/traces)\n' +
-            '  9) Riscos (segurança e custo) + mitigação\n' +
-            '  10) Trade-offs: para cada decisão relevante, liste 2 prós e 2 contras\n' +
-            '  11) Plano de entrega: milestones/sprints, dependências, gargalos e riscos de burnout\n' +
-            '- Em seguida, produza IMEDIATAMENTE um breakdown no formato:\n' +
-            '  ```plan\n' +
-            '  Tarefa | skill_id\n' +
-            '  ```\n' +
-            '  skill_ids válidos: cto, cfo, coo, project-manager, systems-architect, backend-dev, frontend-dev, devops, security, data-scientist, code-review, tests, excel-expert, seo, marketing, chat-assistant\n' +
-            '- Termine pedindo aprovação do TDD/plano. Se não aprovado, pergunte o que mudar.\n\n' +
-            'DELEGATE (contratos de serviço):\n' +
-            '- [BACKEND] Antes de codar: ERD + endpoints (OpenAPI/Swagger). Foque em Clean Architecture, erros e performance.\n' +
-            '- [FRONTEND] Antes de codar: hierarquia de componentes + estratégia de estado. Foque em Core Web Vitals e acessibilidade (WCAG).\n' +
-            '- [DEVOPS] Antes de executar: pipeline CI/CD + arquitetura cloud/IaC. Foque em observabilidade e custos.\n' +
-            '- [SECURITY] Revise planos de backend/frontend antes de implementar. Foque em OWASP, cripto, OAuth2/JWT e LGPD/GDPR.\n' +
-            '- [DATA] Antes de modelar: pipeline de dados + métricas (Acurácia/F1). Foque em integridade e ética.\n' +
-            '- [PM] Organize em sprints, MoSCoW e critérios de aceite; mantenha backlog e documentação.\n\n' +
-            'BUILD:\n' +
-            '- Só execute após aprovação.\n' +
-            '- Integre as respostas, valide contra o plano e rejeite dívida técnica sem justificativa.\n' +
-            '- Testes unitários obrigatórios nos módulos relevantes; segurança by design.'
-        }
-      },
-      {
-        id: 'cfo',
-        name: 'CFO',
-        description: 'Finance orchestrator. Budgets, runway, pricing, KPIs and controls. Plan-first.',
-        content: {
-          role: 'Chief Financial Officer',
-          mode: 'plan→build',
-          focus: ['budgeting', 'runway', 'pricing', 'unit economics', 'KPIs', 'risk', 'controls'],
-          prompt:
-            'Você é o CFO — orquestrador de Finanças.\n' +
-            'Fluxo obrigatório: PLAN → DELEGATE → EXECUTE.\n' +
-            'Regra: não proponha ações irreversíveis (contratação, gastos, mudança de preço) sem um plano aprovado.\n\n' +
-            'Regra de credenciais: NUNCA solicite chaves de API ou secrets no chat. Se precisar, direcione para Settings → LLM (token: [[open_settings:llm_api_key]]).\n\n' +
-            'PLAN:\n' +
-            '- Faça 3–7 perguntas objetivas: objetivo (reduzir custo, aumentar receita, planejamento), horizonte (30/90/180 dias), moeda/país, restrições, fonte de dados, nível de detalhe e tolerância a risco.\n' +
-            '- Gere um Plano Financeiro em Markdown com:\n' +
-            '  1) Objetivo e contexto\n' +
-            '  2) Premissas (receita, custos, churn, CAC, conversão, impostos quando aplicável)\n' +
-            '  3) Modelo de custos (fixos/variáveis) e alavancas\n' +
-            '  4) KPIs (definições e como medir)\n' +
-            '  5) Cenários (base/otimista/pessimista) e trade-offs (2 prós/2 contras)\n' +
-            '  6) Riscos e controles (fraude, compliance, caixa)\n' +
-            '  7) Plano de execução (passos, donos, datas)\n' +
-            '- Em seguida, gere um bloco:\n' +
-            '  ```plan\n' +
-            '  Tarefa | skill_id\n' +
-            '  ```\n' +
-            '  Use skill_ids como: cfo, project-manager, excel-expert, marketing, security, chat-assistant.\n' +
-            '- Peça aprovação explícita.\n\n' +
-            'DELEGATE:\n' +
-            '- [EXCEL] Modelo financeiro, dashboards e validação de dados.\n' +
-            '- [PM] Backlog financeiro, sprints, critérios de aceite e registro de decisões.\n' +
-            '- [MARKETING] Testes de precificação/mensagens e impacto em conversão.\n' +
-            '- [SECURITY] Controles, auditoria, risco e conformidade quando aplicável.\n\n' +
-            'EXECUTE:\n' +
-            '- Só após aprovação. Execute incrementalmente e revise métricas a cada entrega.'
-        }
-      },
-      {
-        id: 'coo',
-        name: 'COO',
-        description: 'Operations orchestrator. Processes, delivery, teams, SLAs and execution. Plan-first.',
-        content: {
-          role: 'Chief Operating Officer',
-          mode: 'plan→build',
-          focus: ['operations', 'processes', 'SOPs', 'execution', 'SLAs', 'org design', 'risk'],
-          prompt:
-            'Você é o COO — orquestrador de Operações.\n' +
-            'Fluxo obrigatório: PLAN → DELEGATE → EXECUTE.\n' +
-            'Regra: não proponha mudanças organizacionais/processuais grandes sem um plano aprovado e critérios de sucesso.\n\n' +
-            'Regra de credenciais: NUNCA solicite chaves de API ou secrets no chat. Se precisar, direcione para Settings → LLM (token: [[open_settings:llm_api_key]]).\n\n' +
-            'PLAN:\n' +
-            '- Faça 3–7 perguntas objetivas: área (suporte, vendas, entrega, logística, produto), métricas atuais, gargalos, stakeholders, restrições e horizonte.\n' +
-            '- Produza um Plano Operacional em Markdown com:\n' +
-            '  1) Objetivo e escopo\n' +
-            '  2) Situação atual (processos, papéis, SLAs)\n' +
-            '  3) Proposta (processos/SOPs, RACI, cadência, ferramentas)\n' +
-            '  4) Métricas e metas (OKRs/KPIs) + como medir\n' +
-            '  5) Riscos e mitigação\n' +
-            '  6) Trade-offs (2 prós/2 contras) para mudanças relevantes\n' +
-            '  7) Plano de execução (fases, donos, prazos)\n' +
-            '- Em seguida, gere um bloco:\n' +
-            '  ```plan\n' +
-            '  Tarefa | skill_id\n' +
-            '  ```\n' +
-            '  Use skill_ids como: coo, project-manager, chat-assistant, systems-architect, security.\n' +
-            '- Peça aprovação explícita.\n\n' +
-            'DELEGATE:\n' +
-            '- [PM] Organização em sprints, critérios de aceite, gestão de impedimentos e documentação.\n' +
-            '- [ARCH] Se houver sistema/automação, desenhe integrações e fluxos.\n' +
-            '- [SECURITY] Se envolver dados sensíveis e controles, revise riscos.\n\n' +
-            'EXECUTE:\n' +
-            '- Só após aprovação. Entregue melhorias por incrementos e valide por métricas.'
-        }
-      },
-      {
-        id: 'project-manager',
-        name: 'Project Manager',
-        description: 'Documents everything. Keeps records, decisions, risks and meeting notes.',
-        content: {
-          role: 'Project Manager',
-          focus: ['documentation', 'decisions log', 'risk register', 'meeting notes', 'status reports'],
-          prompt:
-            'You are acting as Project Manager. Your primary output is written documentation.\n' +
-            'For every interaction: capture decisions made, open items, risks identified and owners. ' +
-            'Produce structured artefacts (meeting notes, ADRs, risk register entries, status reports) in Markdown. ' +
-            'Ask who owns each action item and what the due date is. ' +
-            'Never leave a conversation without a written summary.'
-        }
-      },
-      {
-        id: 'systems-architect',
-        name: 'Systems Architect',
-        description: 'Designs scalable, maintainable systems. Evaluates patterns, trade-offs and integration points.',
-        content: {
-          role: 'Systems Architect',
-          mode: 'plan→build',
-          focus: ['system design', 'patterns', 'APIs', 'data models', 'scalability', 'observability'],
-          prompt:
-            'You are acting as Systems Architect. When given a requirement:\n' +
-            '1. Ask about scale, SLAs, team size and existing constraints.\n' +
-            '2. Propose 2–3 architectural options with trade-offs (complexity, cost, flexibility).\n' +
-            '3. Recommend one and justify it.\n' +
-            '4. Produce a design artefact: component diagram description, data model sketch, API contracts, and a list of cross-cutting concerns (auth, logging, error handling, migrations).\n' +
-            'Prefer simple, boring technology unless there is a clear reason not to.'
-        }
-      },
-      // ── Engineering ──────────────────────────────────────────────────────────
-      {
-        id: 'backend-dev',
-        name: 'Backend Developer',
-        description: 'Helps with APIs, databases, performance, auth and integrations.',
-        content: {
-          role: 'Backend Developer',
-          focus: ['FastAPI', 'Python', 'SQL', 'authentication', 'migrations', 'performance'],
-          prompt:
-            'Você é o Engenheiro Backend Sênior sob comando do CTO.\n' +
-            'Regra de credenciais: NUNCA solicite chaves de API ou secrets no chat. Se precisar, direcione para Settings → LLM.\n' +
-            'Regra: antes de escrever código, apresente:\n' +
-            '- Esquema do banco (ERD: tabelas, chaves, relacionamentos, índices)\n' +
-            '- Contrato da API (lista de endpoints estilo OpenAPI: método, path, payload, respostas, erros)\n' +
-            'Depois de aprovado, entregue: implementação com tratamento de erros, validação de entrada, migrações e testes.\n' +
-            'Foque em Clean Architecture, integridade, performance de queries e segurança (injeção, auth bypass, segredos).'
-        }
-      },
-      {
-        id: 'frontend-dev',
-        name: 'Frontend Developer',
-        description: 'Helps with UI/UX, React, state management, accessibility and performance.',
-        content: {
-          role: 'Frontend Developer',
-          focus: ['React', 'TypeScript', 'CSS', 'accessibility', 'state management', 'performance'],
-          prompt:
-            'Você é o Especialista Frontend sob comando do CTO.\n' +
-            'Regra de credenciais: NUNCA solicite chaves de API ou secrets no chat. Se precisar, direcione para Settings → LLM.\n' +
-            'Regra: antes de escrever código, descreva:\n' +
-            '- Hierarquia de componentes (páginas → componentes → subcomponentes)\n' +
-            '- Estratégia de gerenciamento de estado (local/context/query cache) e fluxo de dados\n' +
-            '- Responsividade (breakpoints) + acessibilidade (WCAG) + performance (Core Web Vitals)\n' +
-            'Depois de aprovado, entregue: componentes, estilos, comportamento responsivo e notas de a11y.\n' +
-            'Prefira HTML semântico e interações progressivas.'
-        }
-      },
-      {
-        id: 'devops',
-        name: 'DevOps',
-        description: 'Helps with deploy, environments, CI/CD, observability and automation.',
-        content: {
-          role: 'DevOps Engineer',
-          focus: ['Docker', 'CI/CD', 'monitoring', 'secrets management', 'IaC'],
-          prompt:
-            'Você é o Especialista em Infraestrutura e CI/CD sob comando do CTO.\n' +
-            'Regra de credenciais: NUNCA solicite chaves de API ou secrets no chat. Se precisar, direcione para Settings → LLM.\n' +
-            'Regra: antes de executar, descreva:\n' +
-            '- Fluxo de pipeline (CI/CD) com etapas, gates e artefatos\n' +
-            '- Arquitetura cloud (ou self-hosted) e IaC (o que será provisionado)\n' +
-            '- Observabilidade (logs/métricas/traces) e estratégia de custos\n' +
-            'Depois de aprovado, entregue: configs (pipeline, Docker/compose), estratégia de deploy/rollback e gestão de segredos.\n' +
-            'Nunca coloque segredos no código.'
-        }
-      },
-      {
-        id: 'security',
-        name: 'Security Reviewer',
-        description: 'Reviews risks, hardens auth, data handling and system boundaries.',
-        content: {
-          role: 'Security Engineer',
-          focus: ['OWASP', 'auth', 'PII', 'secrets', 'threat modelling', 'hardening'],
-          prompt:
-            'Você é o Guardião da Segurança sob comando do CTO.\n' +
-            'Regra de credenciais: NUNCA solicite chaves de API ou secrets no chat. Se precisar orientar configuração, direcione para Settings → LLM.\n' +
-            'Regra: revise o plano de backend e frontend antes de qualquer implementação.\n' +
-            'Entregue:\n' +
-            '- Threat model (STRIDE) com severidade (Critical/High/Medium/Low)\n' +
-            '- Mitigações e prioridades\n' +
-            '- Checklist OWASP Top 10\n' +
-            '- Recomendações de autenticação (OAuth2/JWT), criptografia e manuseio de segredos\n' +
-            '- Conformidade (LGPD/GDPR) quando aplicável\n' +
-            'Aponte riscos de logging de dados sensíveis e dependências vulneráveis.'
-        }
-      },
-      {
-        id: 'data-scientist',
-        name: 'Data Scientist',
-        description: 'Analytics, machine learning, metrics, data quality and AI integration.',
-        content: {
-          role: 'Data Scientist',
-          focus: ['data pipelines', 'analytics', 'ML', 'metrics', 'data quality', 'ethics'],
-          prompt:
-            'Você é o Especialista em Dados e IA sob comando do CTO.\n' +
-            'Regra de credenciais: NUNCA solicite chaves de API ou secrets no chat. Se precisar, direcione para Settings → LLM.\n' +
-            'Regra: antes de treinar modelos, defina:\n' +
-            '- Pipeline de dados (coleta → limpeza → validação → features → treino → avaliação → deploy)\n' +
-            '- Métricas de sucesso (ex.: Acurácia, F1, precisão/recall) e como medir\n' +
-            '- Requisitos de integridade de dados e privacidade\n' +
-            '- Riscos e ética em IA (viés, explicabilidade, segurança)\n' +
-            'Depois de aprovado, entregue o plano de implementação e validação.'
-        }
-      },
-      {
-        id: 'code-review',
-        name: 'Code Review',
-        description: 'Objective review of changes — bugs, readability, edge cases.',
-        content: {
-          focus: ['quality', 'readability', 'bugs', 'edge cases', 'naming', 'complexity'],
-          prompt:
-            'You are doing a code review. For the code pasted:\n' +
-            '1. Bugs and correctness issues (must fix).\n' +
-            '2. Edge cases not handled (should fix).\n' +
-            '3. Readability and naming (nice to have).\n' +
-            '4. Overall assessment in one sentence.\n' +
-            'Be direct. Do not praise code for being correct — that is the baseline.'
-        }
-      },
-      {
-        id: 'tests',
-        name: 'Test Engineer',
-        description: 'Creates and adjusts tests, validates critical scenarios.',
-        content: {
-          focus: ['unit', 'integration', 'e2e', 'regression', 'property-based'],
-          prompt:
-            'You are acting as Test Engineer.\n' +
-            'For the behaviour described: list test cases (happy path, edge cases, error paths), then write the tests.\n' +
-            'Prioritise: critical business logic, security boundaries, regression of past bugs.\n' +
-            'Name tests so they read as specifications.'
-        }
-      },
-      // ── Data & Productivity ──────────────────────────────────────────────────
-      {
-        id: 'excel-expert',
-        name: 'Excel Expert',
-        description: 'Formulas, pivot tables, VBA macros, data modelling and automation in Excel/Sheets.',
-        content: {
-          role: 'Excel & Spreadsheet Expert',
-          focus: ['formulas', 'pivot tables', 'VBA', 'Power Query', 'data modelling', 'dashboards'],
-          prompt:
-            'You are acting as Excel Expert.\n' +
-            'Ask for: the goal (analysis, report, automation), data structure, Excel version or Google Sheets.\n' +
-            'Deliver: exact formulas with explanation, step-by-step instructions for pivot/charts, or VBA/Apps Script code if automation is needed.\n' +
-            'Always explain what each formula does so the user can adapt it.'
-        }
-      },
-      // ── Growth & Marketing ───────────────────────────────────────────────────
-      {
-        id: 'seo',
-        name: 'SEO Specialist',
-        description: 'Keyword research, on-page optimisation, technical SEO and content strategy.',
-        content: {
-          role: 'SEO Specialist',
-          focus: ['keyword research', 'on-page SEO', 'technical SEO', 'content strategy', 'link building', 'Core Web Vitals'],
-          prompt:
-            'You are acting as SEO Specialist.\n' +
-            'Ask for: website URL or topic, target audience, current traffic/rankings if known, main competitors.\n' +
-            'Deliver: keyword opportunities (intent-mapped), on-page recommendations, technical issues checklist, and a content brief for the primary target keyword.\n' +
-            'Ground recommendations in what is measurable and actionable within 30 days.'
-        }
-      },
-      {
-        id: 'marketing',
-        name: 'Marketing Strategist',
-        description: 'Positioning, messaging, campaigns, copy and growth strategy.',
-        content: {
-          role: 'Marketing Strategist',
-          focus: ['positioning', 'messaging', 'copywriting', 'campaigns', 'funnels', 'growth'],
-          prompt:
-            'You are acting as Marketing Strategist.\n' +
-            'Ask for: product, target persona, main differentiator, stage (awareness/consideration/conversion), channel and budget constraints.\n' +
-            'Deliver: positioning statement, key messages per audience segment, campaign concept, and copy variants for the primary channel.\n' +
-            'Always connect tactics to a measurable outcome (conversion, sign-up, revenue).'
-        }
-      },
-      // ── Assistant ────────────────────────────────────────────────────────────
-      {
-        id: 'chat-assistant',
-        name: 'Chat Assistant',
-        description: 'Thoughtful general assistant. Searches the web when information may be outdated or unknown.',
-        content: {
-          role: 'General Assistant',
-          focus: ['research', 'analysis', 'writing', 'problem-solving'],
-          web_search: true,
-          prompt:
-            'You are a thoughtful general-purpose assistant.\n' +
-            'Security rule: NEVER ask the user to paste API keys, tokens or secrets in chat. If credentials are needed, direct them to Settings → LLM (token: [[open_settings:llm_api_key]]).\n' +
-            'IMPORTANT: When asked about current events, recent data, prices, persons, or anything that may have changed, say so clearly and search the web for up-to-date information before answering.\n' +
-            'Structure your answers: lead with the direct answer, then supporting details, then sources if applicable.\n' +
-            'If you are uncertain, say so. Do not confabulate facts — acknowledge the limit and offer to look it up.'
-        }
-      },
-      // ── Meta ─────────────────────────────────────────────────────────────────
-      {
-        id: 'skill-creator',
-        name: 'Skill Creator',
-        description: 'Creates and edits skills safely, guiding the user step by step.',
-        content: {
-          purpose: 'Create/edit skills',
-          inputs: ['goal', 'examples', 'constraints'],
-          outputs: ['implementation', 'validation', 'test plan'],
-          prompt:
-            'You are Skill Creator. Guide the user to build a new skill:\n' +
-            '1. Ask: what should this skill do? What inputs does it receive? What outputs should it produce? Any constraints or examples?\n' +
-            '2. Draft the skill JSON (id, name, description, content with prompt and focus).\n' +
-            '3. Review: does the prompt clearly define the role, ask for needed context, and specify the output format?\n' +
-            '4. Enforce: the skill must never request API keys/tokens/secrets in chat; credentials are configured via Settings → LLM.\n' +
-            '5. Suggest 2–3 test prompts to validate the skill before saving.'
-        }
-      }
-    ];
+    const defaults = buildDefaultSkills();
 
     try {
       // v2: bump key to invalidate old default skills from previous versions
@@ -2899,6 +1204,35 @@ const App = () => {
     }
   };
 
+  const fetchSystemMap = async ({ silent = false, refresh = false } = {}) => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return;
+    if (!silent) {
+      setSystemMapLoading(true);
+      setSystemMapError('');
+    }
+    try {
+      const res = await fetch(refresh ? '/api/system_map/refresh' : '/api/system_map', {
+        method: refresh ? 'POST' : 'GET',
+        headers
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.detail || 'Error loading system map.');
+      }
+      setSystemMapText(String(json?.ascii || ''));
+      setSystemMapUpdatedAt(String(json?.generated_at || ''));
+    } catch (e) {
+      setSystemMapError(lang === 'pt' ? 'Não foi possível carregar o mapa do sistema.' : 'Could not load system map.');
+      setSystemMapText('');
+      setSystemMapUpdatedAt('');
+    } finally {
+      if (!silent) {
+        setSystemMapLoading(false);
+      }
+    }
+  };
+
   const loadSettings = async () => {
     try {
       const headers = getAuthHeaders();
@@ -2927,6 +1261,27 @@ const App = () => {
       setLlmApiKeySource((llmJson?.api_key_source || (llmJson?.has_api_key ? 'stored' : 'none')));
       setLlmHasStoredApiKey(Boolean(llmJson?.has_stored_api_key));
       setLlmHasEnvApiKey(Boolean(llmJson?.has_env_api_key));
+      setLlmProviderKeys([]);
+      setLlmProviderKeysError('');
+      if ((llm.mode || 'env') === 'api') {
+        try {
+          setLlmProviderKeysLoading(true);
+          const providerId = (llm.provider || 'openai').toString().trim().toLowerCase();
+          const keysRes = await fetch(`/api/settings/llm/keys?provider=${encodeURIComponent(providerId)}`, { headers });
+          const keysJson = await keysRes.json().catch(() => ({}));
+          if (keysRes.ok) {
+            setLlmProviderKeys(Array.isArray(keysJson?.keys) ? keysJson.keys : []);
+          } else {
+            setLlmProviderKeys([]);
+            setLlmProviderKeysError(keysJson?.detail || 'Could not load saved keys.');
+          }
+        } catch {
+          setLlmProviderKeys([]);
+          setLlmProviderKeysError('Could not load saved keys.');
+        } finally {
+          setLlmProviderKeysLoading(false);
+        }
+      }
 
       const soulRes = await fetch('/api/soul', { headers });
       const soulJson = await soulRes.json();
@@ -3020,6 +1375,136 @@ const App = () => {
     loadProviderStatus();
   }, [user, token, centerView, settingsTab]);
 
+  useEffect(() => {
+    if (!user || !token) return;
+    if (centerView !== 'settings') return;
+    if (settingsTab !== 'security') return;
+    if (autoApproveCommandsLoading) return;
+    if (autoApproveCommands?.length) return;
+    loadAutoApproveCommands({ silent: false });
+  }, [user, token, centerView, settingsTab]);
+
+  const loadExternalMemoryImports = async ({ silent = false } = {}) => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return;
+    try {
+      if (!silent) {
+        setExternalMemoryImportsLoading(true);
+        setExternalMemoryImportsError('');
+      }
+      const res = await fetch('/api/memory/imports?limit=25', { headers });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.detail || 'Failed to load imports.');
+      }
+      setExternalMemoryImports(Array.isArray(json?.imports) ? json.imports : []);
+    } catch (e) {
+      if (!silent) {
+        setExternalMemoryImportsError(e?.message || 'Failed to load imports.');
+      }
+      setExternalMemoryImports([]);
+    } finally {
+      if (!silent) {
+        setExternalMemoryImportsLoading(false);
+      }
+    }
+  };
+
+  const setExternalMemoryImportPinned = async (importId, pinned) => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return false;
+    const iid = String(importId || '').trim();
+    if (!iid) return false;
+    try {
+      headers['Content-Type'] = 'application/json';
+      const res = await fetch(`/api/memory/imports/${encodeURIComponent(iid)}/pin`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ pinned: Boolean(pinned) })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.detail || 'Failed to update.');
+      await loadExternalMemoryImports({ silent: true });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const deleteExternalMemoryImport = async (importId) => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return false;
+    const iid = String(importId || '').trim();
+    if (!iid) return false;
+    try {
+      const res = await fetch(`/api/memory/imports/${encodeURIComponent(iid)}`, {
+        method: 'DELETE',
+        headers
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.detail || 'Failed to delete.');
+      await loadExternalMemoryImports({ silent: true });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    if (!user || !token) return;
+    if (centerView !== 'settings') return;
+    if (settingsTab !== 'memory') return;
+    if (externalMemoryImportsLoading) return;
+    loadExternalMemoryImports({ silent: false });
+  }, [user, token, centerView, settingsTab]);
+
+  const runMemoryDream = async () => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return false;
+    try {
+      setMemoryDreamLoading(true);
+      setMemoryDreamSnapshot('');
+      const res = await fetch('/api/memory/dream', { method: 'POST', headers });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(String(json?.detail || 'Failed to run Dream.'));
+      }
+      setMemoryDreamDecayed(Number(json?.decayed || 0));
+      setMemoryDreamPruned(Number(json?.pruned || 0));
+      setMemoryDreamSnapshot(String(json?.snapshot || ''));
+      return true;
+    } catch (e) {
+      setGenericModal({ title: t('error'), body: e?.message || 'Failed to run Dream.' });
+      return false;
+    } finally {
+      setMemoryDreamLoading(false);
+    }
+  };
+
+  const searchRawMemory = async () => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return;
+    const q = String(rawMemoryQuery || '').trim();
+    if (!q) return;
+    try {
+      setRawMemoryLoading(true);
+      setRawMemoryError('');
+      setRawMemoryResults([]);
+      const url = `/api/memory/search_raw?q=${encodeURIComponent(q)}&limit=50`;
+      const res = await fetch(url, { headers });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(String(json?.detail || 'Failed to search.'));
+      }
+      setRawMemoryResults(Array.isArray(json?.results) ? json.results : []);
+    } catch (e) {
+      setRawMemoryError(e?.message || 'Failed to search.');
+      setRawMemoryResults([]);
+    } finally {
+      setRawMemoryLoading(false);
+    }
+  };
+
   const getStoredLlmPrefs = () => {
     try {
       const raw = localStorage.getItem('open_slap_llm_prefs');
@@ -3102,6 +1587,59 @@ const App = () => {
     }
   };
 
+  const loadAutoApproveCommands = async ({ silent = false } = {}) => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return;
+    try {
+      if (!silent) {
+        setAutoApproveCommandsLoading(true);
+        setAutoApproveCommandsError('');
+      }
+      const res = await fetch('/api/commands/autoapprove?limit=200', { headers });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.detail || 'Could not load auto-approvals.');
+      }
+      setAutoApproveCommands(Array.isArray(json?.items) ? json.items : []);
+    } catch (e) {
+      if (!silent) {
+        setAutoApproveCommandsError(e?.message || 'Could not load auto-approvals.');
+      }
+      setAutoApproveCommands([]);
+    } finally {
+      if (!silent) {
+        setAutoApproveCommandsLoading(false);
+      }
+    }
+  };
+
+  const deleteAutoApproveCommand = async (commandNorm) => {
+    const cmd = String(commandNorm || '').trim().toLowerCase();
+    if (!cmd) return false;
+    try {
+      const headers = getAuthHeaders();
+      if (!headers.Authorization) return false;
+      headers['Content-Type'] = 'application/json';
+      const res = await fetch('/api/commands/autoapprove', {
+        method: 'DELETE',
+        headers,
+        body: JSON.stringify({ command_norm: cmd })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.detail || 'Could not remove auto-approval.');
+      }
+      await loadAutoApproveCommands({ silent: true });
+      return true;
+    } catch (e) {
+      setGenericModal({
+        title: t('error'),
+        body: e?.message || 'Could not remove auto-approval.'
+      });
+      return false;
+    }
+  };
+
   const saveLlmSettings = async () => {
     try {
       const headers = getAuthHeaders();
@@ -3116,11 +1654,15 @@ const App = () => {
         ? 'gemini'
         : rawKey.startsWith('gsk_')
           ? 'groq'
-          : rawKey.startsWith('sk-')
-            ? 'openai'
-            : '';
+          : rawKey.startsWith('sk-or-')
+            ? 'openrouter'
+            : rawKey.startsWith('sk-ant-')
+              ? 'anthropic'
+              : rawKey.startsWith('sk-')
+                ? 'openai'
+                : '';
 
-      const providerToSave = inferredProvider || llmProvider;
+      const providerToSave = inferredProvider || llmProvider || (rawKey ? 'openai' : '');
       const normalizedBaseUrl = (llmBaseUrl || '').trim();
       const cleanedBaseUrl = normalizedBaseUrl.replace(/[`'"]/g, '').replace(/,+$/, '');
       const baseUrlToSave = (llmMode === 'api' && providerToSave === 'gemini')
@@ -3138,8 +1680,25 @@ const App = () => {
         provider: providerToSave,
         model: llmModel || null,
         base_url: baseUrlToSave,
-        api_key: rawKey ? rawKey : null
+        api_key: null
       };
+
+      if (llmMode === 'api' && rawKey) {
+        if (!providerToSave) {
+          throw new Error('Provider required');
+        }
+        const keyRes = await fetch('/api/settings/llm/keys', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ provider: providerToSave, api_key: rawKey })
+        });
+        const keyJson = await keyRes.json().catch(() => ({}));
+        if (!keyRes.ok) {
+          throw new Error(keyJson?.detail || 'Error saving API key.');
+        }
+        setLlmApiKey('');
+        setLlmApiKeyOpen(false);
+      }
 
       const res = await fetch('/api/settings/llm', {
         method: 'PUT',
@@ -3152,14 +1711,35 @@ const App = () => {
         throw new Error(json?.detail || 'Error saving LLM settings.');
       }
 
-      if (payload.api_key) {
-        setLlmApiKey('');
-        setLlmApiKeyOpen(false);
+      try {
+        const refreshRes = await fetch('/api/settings/llm', { headers });
+        const refreshJson = await refreshRes.json().catch(() => ({}));
+        if (refreshRes.ok) {
+          setLlmHasApiKey(Boolean(refreshJson?.has_api_key));
+          setLlmApiKeySource((refreshJson?.api_key_source || (refreshJson?.has_api_key ? 'stored' : 'none')));
+          setLlmHasStoredApiKey(Boolean(refreshJson?.has_stored_api_key));
+          setLlmHasEnvApiKey(Boolean(refreshJson?.has_env_api_key));
+        }
+      } catch {}
+
+      try {
+        setLlmProviderKeysLoading(true);
+        const keysRes = await fetch(`/api/settings/llm/keys?provider=${encodeURIComponent(providerToSave)}`, { headers });
+        const keysJson = await keysRes.json().catch(() => ({}));
+        if (keysRes.ok) {
+          setLlmProviderKeys(Array.isArray(keysJson?.keys) ? keysJson.keys : []);
+          setLlmProviderKeysError('');
+        } else {
+          setLlmProviderKeys([]);
+          setLlmProviderKeysError(keysJson?.detail || 'Could not load saved keys.');
+        }
+      } catch {
+        setLlmProviderKeys([]);
+        setLlmProviderKeysError('Could not load saved keys.');
+      } finally {
+        setLlmProviderKeysLoading(false);
       }
-      setLlmHasApiKey(Boolean(json?.has_api_key));
-      setLlmApiKeySource((json?.api_key_source || (json?.has_api_key ? 'stored' : 'none')));
-      setLlmHasStoredApiKey(Boolean(json?.has_stored_api_key));
-      setLlmHasEnvApiKey(Boolean(json?.has_env_api_key));
+
       setStoredLlmPrefs({
         mode: payload.mode,
         provider: payload.provider,
@@ -3169,9 +1749,55 @@ const App = () => {
       setLlmProvider(payload.provider);
       setLlmBaseUrl(payload.base_url || '');
     } catch (error) {
-      setSettingsError(t('llm_settings_save_error'));
+      const msg = String(error?.message || '').trim();
+      setSettingsError(msg || t('llm_settings_save_error'));
     } finally {
       setSettingsLoading(false);
+    }
+  };
+
+  const setActiveLlmProviderKey = async (providerId, keyId) => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return;
+    try {
+      setLlmProviderKeysLoading(true);
+      setLlmProviderKeysError('');
+      const res = await fetch(`/api/settings/llm/keys/${encodeURIComponent(String(providerId || ''))}/active`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ key_id: Number(keyId) })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.detail || 'Error selecting key.');
+      const keysRes = await fetch(`/api/settings/llm/keys?provider=${encodeURIComponent(String(providerId || ''))}`, { headers });
+      const keysJson = await keysRes.json().catch(() => ({}));
+      if (keysRes.ok) setLlmProviderKeys(Array.isArray(keysJson?.keys) ? keysJson.keys : []);
+    } catch (e) {
+      setLlmProviderKeysError('Could not select key.');
+    } finally {
+      setLlmProviderKeysLoading(false);
+    }
+  };
+
+  const deleteLlmProviderKey = async (providerId, keyId) => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return;
+    try {
+      setLlmProviderKeysLoading(true);
+      setLlmProviderKeysError('');
+      const res = await fetch(`/api/settings/llm/keys/${encodeURIComponent(String(providerId || ''))}/${encodeURIComponent(String(keyId))}`, {
+        method: 'DELETE',
+        headers
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.detail || 'Error deleting key.');
+      const keysRes = await fetch(`/api/settings/llm/keys?provider=${encodeURIComponent(String(providerId || ''))}`, { headers });
+      const keysJson = await keysRes.json().catch(() => ({}));
+      if (keysRes.ok) setLlmProviderKeys(Array.isArray(keysJson?.keys) ? keysJson.keys : []);
+    } catch (e) {
+      setLlmProviderKeysError('Could not delete key.');
+    } finally {
+      setLlmProviderKeysLoading(false);
     }
   };
 
@@ -3337,6 +1963,69 @@ const App = () => {
     }
   }, [centerView, settingsLoading]);
 
+  const saveOnboardingSoulDraft = async () => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return false;
+    setOnboardingSoulSaving(true);
+    setOnboardingError('');
+    try {
+      const currentRes = await fetch('/api/soul', { headers });
+      const currentJson = await currentRes.json().catch(() => ({}));
+      const base = (currentJson?.data && typeof currentJson.data === 'object') ? currentJson.data : {};
+      const next = {
+        ...base,
+        name: String(onboardingSoulDraft?.name || '').trim(),
+        age_range: String(onboardingSoulDraft?.age_range || '').trim(),
+        goals: String(onboardingSoulDraft?.goals || '').trim()
+      };
+      const res = await fetch('/api/soul', {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ data: next })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.detail || 'Error saving profile.');
+      setSoulData((prev) => ({ ...(prev || {}), ...next }));
+      setSoulMarkdown(json?.markdown || '');
+      return true;
+    } catch (e) {
+      setOnboardingError(t('soul_save_error'));
+      return false;
+    } finally {
+      setOnboardingSoulSaving(false);
+    }
+  };
+
+  const completeOnboarding = async () => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return;
+    try {
+      setOnboardingActionLoading(true);
+      const res = await fetch('/api/onboarding/complete', { method: 'POST', headers });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.detail || 'Error completing onboarding.');
+      try { localStorage.setItem('open_slap_onboarding_hide_v1', '1'); } catch {}
+    } catch {
+    } finally {
+      setOnboardingActionLoading(false);
+    }
+  };
+
+  const resetOnboarding = async () => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return;
+    try {
+      setOnboardingActionLoading(true);
+      const res = await fetch('/api/onboarding/reset', { method: 'POST', headers });
+      await res.json().catch(() => ({}));
+      try { localStorage.removeItem('open_slap_onboarding_hide_v1'); } catch {}
+    } catch {
+      try { localStorage.removeItem('open_slap_onboarding_hide_v1'); } catch {}
+    } finally {
+      setOnboardingActionLoading(false);
+    }
+  };
+
   const saveSoul = async () => {
     try {
       const headers = getAuthHeaders();
@@ -3419,6 +2108,11 @@ const App = () => {
       // Onboarding check
       if (!onboardingChecked) {
         setOnboardingChecked(true);
+        let hide = false;
+        try {
+          hide = localStorage.getItem('open_slap_onboarding_hide_v1') === '1';
+        } catch {}
+        if (hide) return;
         fetch('/api/onboarding/status', { headers: getAuthHeaders() })
           .then(r => r.json())
           .then(d => { if (!d.completed) setShowOnboarding(true); })
@@ -3426,6 +2120,24 @@ const App = () => {
       }
     }
   }, [user, token]);
+
+  useEffect(() => {
+    if (!showOnboarding) return;
+    setOnboardingStep(0);
+    setOnboardingError('');
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return;
+    fetch('/api/soul', { headers })
+      .then((r) => r.json())
+      .then((d) => {
+        setOnboardingSoulDraft({
+          name: d?.data?.name || '',
+          age_range: d?.data?.age_range || '',
+          goals: d?.data?.goals || ''
+        });
+      })
+      .catch(() => {});
+  }, [showOnboarding]);
 
   useEffect(() => {
     const q = conversationSearch.trim();
@@ -3466,6 +2178,34 @@ const App = () => {
     }, 250);
     return () => clearTimeout(t);
   }, [tasksSearch, user, token]);
+
+  // Persistir conversa ativa no storage
+  useEffect(() => {
+    try {
+      if (currentConversation) {
+        localStorage.setItem('open_slap_current_conversation', String(currentConversation));
+      }
+    } catch {}
+  }, [currentConversation]);
+
+  // Restaurar conversa ativa após carregar lista
+  useEffect(() => {
+    if (!user || !token) return;
+    if (currentConversation) return;
+    if (!Array.isArray(conversations) || conversations.length === 0) return;
+    if (hasRestoredConversationRef.current) return;
+    let stored = null;
+    try {
+      stored = localStorage.getItem('open_slap_current_conversation');
+    } catch {}
+    const storedId = stored ? Number(stored) : 0;
+    if (!storedId) return;
+    const found = conversations.find((c) => Number(c?.id || c?.conversation_id || 0) === storedId);
+    if (!found) return;
+    const sid = found.session_id || `session_${storedId}`;
+    hasRestoredConversationRef.current = true;
+    loadConversation(storedId, sid, 'conversation').catch(() => {});
+  }, [user, token, conversations, currentConversation]);
 
   useEffect(() => {
     if (!user || !token) return;
@@ -3546,11 +2286,13 @@ const App = () => {
       const url =
         kind === 'task'
           ? `/api/tasks/${encodeURIComponent(id)}/title`
-          : `/api/conversations/${encodeURIComponent(id)}/title`;
+          : kind === 'project'
+            ? `/api/projects/${encodeURIComponent(id)}`
+            : `/api/conversations/${encodeURIComponent(id)}/title`;
       const res = await fetch(url, {
         method: 'PUT',
         headers,
-        body: JSON.stringify({ title: nextTitle })
+        body: JSON.stringify(kind === 'project' ? { name: nextTitle } : { title: nextTitle })
       });
       if (!res.ok) {
         setGenericModal({ title: 'Erro', body: 'Não foi possível renomear. Tente novamente.' });
@@ -3561,6 +2303,8 @@ const App = () => {
         setGlobalTodos((prev) =>
           (prev || []).map((g) => (String(g.conversation_id) === String(id) ? { ...g, task_title: nextTitle } : g))
         );
+      } else if (kind === 'project') {
+        setProjects((prev) => (prev || []).map((p) => (String(p.id) === String(id) ? { ...p, name: nextTitle } : p)));
       } else {
         setConversations((prev) => (prev || []).map((c) => (String(c.id) === String(id) ? { ...c, title: nextTitle } : c)));
       }
@@ -3868,15 +2612,65 @@ const App = () => {
   const createProject = async (name) => {
     try {
       const headers = getAuthHeaders();
-      if (!headers.Authorization) return null;
+      if (!headers.Authorization) {
+        setGenericModal({ title: t('error'), body: lang === 'pt' ? 'Não autenticado.' : 'Not authenticated.' });
+        return null;
+      }
       headers['Content-Type'] = 'application/json';
       const res = await fetch('/api/projects', {
         method: 'POST', headers, body: JSON.stringify({ name })
       });
-      const json = await res.json().catch(() => ({}));
-      if (res.ok) { await loadProjects(); return json.project_id; }
-    } catch {}
+      const raw = await res.text().catch(() => '');
+      let json = {};
+      try {
+        json = raw ? JSON.parse(raw) : {};
+      } catch {
+        json = {};
+      }
+      if (!res.ok) {
+        const detail = String(json?.detail || '').trim();
+        const rawLine = String(raw || '').trim().split('\n')[0]?.trim() || '';
+        const msg =
+          detail ||
+          (rawLine ? `${res.status} ${res.statusText} — ${rawLine}` : `${res.status} ${res.statusText}`) ||
+          (lang === 'pt' ? 'Não foi possível criar o projeto.' : 'Could not create project.');
+        throw new Error(msg);
+      }
+      await loadProjects();
+      return json.project_id;
+    } catch (e) {
+      const msg = String(e?.message || '').trim();
+      const hint = (msg.toLowerCase().includes('econnrefused') || msg.toLowerCase().includes('failed to fetch'))
+        ? (lang === 'pt'
+          ? 'Parece que o backend não está acessível (porta 5150). Verifique se o backend está rodando e se o proxy do Vite está apontando para o endereço correto.'
+          : 'Backend seems unreachable (port 5150). Check if backend is running and Vite proxy targets the correct address.')
+        : '';
+      setGenericModal({
+        title: t('error'),
+        body: hint ? `${msg}\n\n${hint}` : (msg || (lang === 'pt' ? 'Não foi possível criar o projeto.' : 'Could not create project.'))
+      });
+    }
     return null;
+  };
+
+  const deleteProject = async (projectId) => {
+    const pid = Number(projectId || 0);
+    if (!pid) return false;
+    try {
+      const headers = getAuthHeaders();
+      if (!headers.Authorization) return false;
+      const res = await fetch(`/api/projects/${pid}`, { method: 'DELETE', headers });
+      if (!res.ok) return false;
+      await loadProjects();
+      if (Number(activeProjectId || 0) === pid) {
+        setActiveProjectId(null);
+        setProjectContextDraft('');
+        if (currentConversation) assignConversationProject(currentConversation, null);
+      }
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   const updateProjectContext = async (projectId, contextMd) => {
@@ -3906,6 +2700,50 @@ const App = () => {
       return false;
     } finally {
       setProjectContextSaving(false);
+    }
+  };
+
+  const ingestKickoffFileToProjectContext = async (file) => {
+    const pid = Number(activeProjectId || 0);
+    if (!pid || !file) return;
+    const fileName = String(file?.name || '').trim() || 'kickoff.txt';
+    const ext = fileName.toLowerCase();
+    if (!(ext.endsWith('.txt') || ext.endsWith('.md'))) {
+      setGenericModal({
+        title: t('error'),
+        body: lang === 'pt' ? 'Envie um arquivo .txt ou .md.' : 'Please upload a .txt or .md file.'
+      });
+      return;
+    }
+    try {
+      const content = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onerror = () => reject(new Error('Failed to read file.'));
+        r.onload = () => resolve(String(r.result || ''));
+        r.readAsText(file);
+      });
+      const normalized = String(content || '').replace(/\r/g, '').trim();
+      const header = `\n\n---\n\n# Kickoff upload: ${fileName}\n\n`;
+      const base = String(projectContextDraft || '').trim();
+      const merged = `${base}${base ? header : header.trimStart()}${normalized}\n`;
+      setProjectContextDraft(merged);
+      const ok = await updateProjectContext(pid, merged);
+      if (!ok) return;
+      const projectName = String(projects.find((p) => Number(p?.id || 0) === pid)?.name || `#${pid}`);
+      const userPrompt =
+        lang === 'pt'
+          ? `Kickoff do projeto "${projectName}" atualizado com o arquivo "${fileName}". Leia o contexto do projeto (Markdown) e estruture: objetivos, escopo, entregáveis, backlog inicial, riscos e próximos passos.`
+          : `Project kickoff "${projectName}" was updated with "${fileName}". Read the project Markdown and structure: goals, scope, deliverables, initial backlog, risks, and next steps.`;
+      const internalPrompt =
+        lang === 'pt'
+          ? `Emita imediatamente um bloco de plano estruturado para aprovação:\n\`\`\`plan\nTarefa: Planejar MVP | project\nTarefa: Definir backlog inicial | project\nTarefa: Arquitetar UI mínima | project\nTarefa: Implementar CRUD de tarefas | software_operator\nTarefa: Persistência local (LocalStorage/SQLite) | software_operator\nTarefa: Testes mínimos e README | project\n\`\`\`\nDepois do bloco \`plan\`, responda com a análise do kickoff (objetivos, escopo, entregáveis, backlog inicial, riscos, próximos passos).`
+          : `Immediately emit a structured plan block for approval:\n\`\`\`plan\nTask: Plan MVP | project\nTask: Define initial backlog | project\nTask: Design minimal UI | project\nTask: Implement task CRUD | software_operator\nTask: Local persistence (LocalStorage/SQLite) | software_operator\nTask: Minimal tests and README | project\n\`\`\`\nAfter the \`plan\` block, reply with the kickoff analysis (goals, scope, deliverables, initial backlog, risks, next steps).`;
+      startNewConversationWithPrompt(userPrompt, { projectId: pid, internalPrompt, kind: 'task' });
+    } catch (e) {
+      setGenericModal({
+        title: t('error'),
+        body: e?.message || 'Failed to read file.'
+      });
     }
   };
 
@@ -3940,6 +2778,31 @@ const App = () => {
     } catch {}
   };
 
+  const saveAssistantInfo = async (message) => {
+    try {
+      if (!message || message.role !== 'assistant') return false;
+      const headers = getAuthHeaders();
+      if (!headers.Authorization) return false;
+      headers['Content-Type'] = 'application/json';
+      const res = await fetch('/api/padxml/save_message', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          conversation_id: currentConversation ? Number(currentConversation) : null,
+          local_message_id: message.id || null,
+          message_id: message.message_id || null,
+          content: String(message.content || '')
+        })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(String(json?.detail || 'Failed to save.'));
+      setSavedInfoLocalMsgIds(prev => ({ ...prev, [message.id]: true }));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const approvePlan = async (convId, tasks) => {
     try {
       const headers = getAuthHeaders();
@@ -3964,6 +2827,20 @@ const App = () => {
       const tr = await fetch(`/api/plan/tasks/${convId}`, { headers: getAuthHeaders() });
       const td = await tr.json().catch(() => ({}));
       setPlanTasks(Array.isArray(td?.tasks) ? td.tasks : []);
+      if (String(currentKind || '') === 'task' && Number(currentConversation || 0) === Number(convId || 0)) {
+        const existing = await fetch(`/api/tasks/${encodeURIComponent(convId)}/todos`, { headers: getAuthHeaders() });
+        const existingJson = await existing.json().catch(() => ({}));
+        const existingTodos = Array.isArray(existingJson?.todos) ? existingJson.todos : [];
+        if (!existingTodos.length) {
+          const rawTasks = Array.isArray(tasks) ? tasks : [];
+          for (const it of rawTasks) {
+            const titleRaw = String(it?.title || '').trim();
+            const cleaned = titleRaw.replace(/^tarefa:\s*/i, '').replace(/^task:\s*/i, '').trim();
+            if (!cleaned) continue;
+            await addTaskTodo(convId, cleaned);
+          }
+        }
+      }
       return true;
     } catch {}
     setGenericModal({
@@ -4173,6 +3050,18 @@ const App = () => {
     return roots;
   };
 
+  const getTodoScope = (td) => {
+    const raw = String(td?.scope || '').trim().toLowerCase();
+    if (raw) return raw;
+    const title = String(td?.task_title || '').trim().toLowerCase();
+    if (title === 'inbox') return 'personal';
+    return 'project';
+  };
+  const getTodoActor = (td) => {
+    const raw = String(td?.actor || '').trim().toLowerCase();
+    return raw || 'human';
+  };
+
   const formatRuntimeLlmLabel = (provider, model, mode) => {
     const p = (provider || '').toString().trim().toLowerCase();
     const m = (model || '').toString().trim();
@@ -4220,424 +3109,47 @@ const App = () => {
     } catch {}
   };
 
-  const flushChunkBuffer = () => {
-    const buffered = chunkBufferRef.current;
-    if (!buffered) return;
-    chunkBufferRef.current = '';
-    setMessages(prev => {
-      const newMessages = [...prev];
-      const lastMessage = newMessages[newMessages.length - 1];
-      if (lastMessage && lastMessage.role === 'assistant' && lastMessage.streaming) {
-        newMessages[newMessages.length - 1] = {
-          ...lastMessage,
-          content: `${lastMessage.content}${buffered}`
-        };
-        return newMessages;
-      }
-      newMessages.push({
-        role: 'assistant',
-        content: buffered,
-        streaming: true,
-        id: `chunk-${Date.now()}-${Math.random().toString(16).slice(2)}`
-      });
-      return newMessages;
-    });
-  };
-
-  const scheduleChunkFlush = () => {
-    if (chunkFlushRef.current) return;
-    const raf = typeof window !== 'undefined' ? window.requestAnimationFrame : null;
-    if (raf) {
-      chunkFlushRef.current = raf(() => {
-        chunkFlushRef.current = null;
-        flushChunkBuffer();
-      });
-      return;
-    }
-    chunkFlushRef.current = setTimeout(() => {
-      chunkFlushRef.current = null;
-      flushChunkBuffer();
-    }, 16);
-  };
-
-  const connectWebSocket = () => {
-    const tokenValue = token || localStorage.getItem('agentic_token');
-    if (!tokenValue) return;
-
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${wsProtocol}://${window.location.host}/ws/${sessionId.current}?token=${tokenValue}`);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      if (wsRef.current !== ws) return;
-      setConnected(true);
-      console.log('WebSocket conectado');
-      fetchRuntimeLlmLabel();
-
-      if (pendingAutoSendRef.current) {
-        const pending = pendingAutoSendRef.current;
-        pendingAutoSendRef.current = null;
-
-        const pendingContent =
-          typeof pending === 'string'
-            ? pending
-            : String(pending?.content || '');
-        const internalPrompt =
-          typeof pending === 'string'
-            ? ''
-            : String(pending?.internalPrompt || '');
-        const forceExpertOverride =
-          typeof pending === 'string'
-            ? ''
-            : String(pending?.forceExpertId || '');
-
-        const now = Date.now();
-        const userMessage = {
-          role: 'user',
-          content: pendingContent,
-          id: `${now}-${Math.random().toString(16).slice(2)}`
-        };
-
-        setStreaming(true);
-        setMessages(prev => [
-          ...prev,
-          userMessage,
-          {
-            role: 'assistant',
-            content: '',
-            streaming: true,
-            id: `${now + 1}-${Math.random().toString(16).slice(2)}`
-          }
-        ]);
-        setInput('');
-
-        const activeSkill = (skills || []).find((s) => s.id === selectedSkillId) || null;
-        ws.send(JSON.stringify({
-          type: 'chat',
-          content: pendingContent,
-          internal_prompt: internalPrompt || null,
-          skill_id: activeSkill?.id || null,
-          skill_web_search: activeSkill?.content?.web_search === true,
-          force_expert_id: (forceExpertOverride || forceExpertId) || null,
-          debug_router: Boolean(showRoutingDebug),
-        }));
-      }
-    };
-
-    ws.onmessage = (event) => {
-      if (wsRef.current !== ws) return;
-      try {
-        const data = JSON.parse(event.data);
-
-        if (data.type === 'history') {
-          if (hasHttpHydratedRef.current) {
-            return;
-          }
-          const msg = data.message || {};
-          setMessages(prev => [
-            ...prev,
-            {
-              ...msg,
-              id: msg.id ?? `history-${Date.now()}-${Math.random().toString(16).slice(2)}`
-            }
-          ]);
-        } else if (data.type === 'chunk') {
-          chunkBufferRef.current = `${chunkBufferRef.current}${String(data.content || '')}`;
-          scheduleChunkFlush();
-        } else if (data.type === 'done') {
-          const selectionReason = String(data.selection_reason || '').trim();
-          const matchedKeywords = Array.isArray(data.matched_keywords) ? data.matched_keywords : [];
-          if (selectionReason) setLastExpertReason(selectionReason);
-          if (matchedKeywords?.length) setLastExpertKeywords(matchedKeywords || []);
-          const _doneMessageId = data.message_id || null;
-          flushChunkBuffer();
-          let actionsToRun = [];
-          let assistantPartsToSchedule = [];
-          let anchorLocalId = null;
-          setMessages(prev => {
-            const newMessages = [...prev];
-            const lastMessage = newMessages[newMessages.length - 1];
-            if (lastMessage && lastMessage.role === 'assistant') {
-              anchorLocalId = lastMessage.id || null;
-              const extracted = parseAssistantDirectivesFromText(lastMessage.content);
-              actionsToRun = extracted.actions || [];
-              assistantPartsToSchedule = (extracted.parts || []).slice(1);
-              newMessages[newMessages.length - 1] = {
-                ...lastMessage,
-                content: extracted.cleaned,
-                streaming: false,
-                expert: data.expert,
-                expert_reason: selectionReason,
-                expert_keywords: matchedKeywords,
-                provider: data.provider,
-                model: data.model,
-                message_id: _doneMessageId,
-              };
-            }
-            return newMessages;
-          });
-          if (data.plan_detected && data.plan_tasks?.length && currentConversation) {
-            const tasks = Array.isArray(data.plan_tasks) ? data.plan_tasks : [];
-            if (tasks.length) setShowExecutionPanel(true);
-            setActivePlanMessageId(_doneMessageId || null);
-            setActivePlanLocalMsgId(anchorLocalId || null);
-            pendingPlanTasksRef.current = {
-              ...(pendingPlanTasksRef.current || {}),
-              [String(currentConversation)]: tasks
-            };
-          }
-          if (actionsToRun.length) {
-            runUiActions(actionsToRun);
-          }
-          if (assistantPartsToSchedule.length) {
-            for (const p of assistantPartsToSchedule) {
-              const delay = Number(p?.delayMs) || 0;
-              const content = String(p?.text || '').trim();
-              if (!content) continue;
-              setTimeout(() => {
-                setMessages(prev => [
-                  ...prev,
-                  {
-                    role: 'assistant',
-                    content,
-                    streaming: false,
-                    id: `split-${Date.now()}-${Math.random().toString(16).slice(2)}`
-                  }
-                ]);
-              }, Math.max(0, delay));
-            }
-          }
-          if (data.provider || data.model) {
-            const label = formatRuntimeLlmLabel(data.provider, data.model, llmMode);
-            if (label) {
-              setRuntimeLlmLabel(label);
-            }
-          }
-          setStreaming(false);
-          setStreamStatusText('');
-          scheduleListsRefresh();
-        } else if (data.type === 'status') {
-          const txt = String(data.content || '').trim();
-          if (txt) setStreamStatusText(txt);
-          if (txt && currentConversation && currentKind === 'task' && txt.toLowerCase().includes('todo')) {
-            loadTaskTodos(currentConversation);
-            loadGlobalTodos();
-            loadTasks();
-          }
-          scheduleListsRefresh();
-        } else if (data.type === 'software_operator') {
-          const executionId = String(data.execution_id || '').trim() || `cli-${Date.now()}`;
-          const status = String(data.status || '').trim().toLowerCase() || 'running';
-          const nowMs = Date.now();
-          setMessages((prev) => {
-            const next = [...prev];
-            const idx = next.findIndex((m) => m?.cli_execution_id === executionId);
-            const base = {
-              role: 'assistant',
-              content: '',
-              streaming: false,
-              id: `cli-${executionId}`,
-              cli_execution_id: executionId,
-              cli: {
-                status,
-                attempt: data.attempt,
-                command: data.command,
-                command_executed: data.command_executed,
-                started_at_ms: data.started_at_ms,
-                timeout_s: data.timeout_s,
-                elapsed_ms: data.elapsed_ms,
-                return_ms: data.return_ms,
-                stdout: data.stdout,
-                stderr: data.stderr,
-                stdout_chunk: data.stdout_chunk,
-                stderr_chunk: data.stderr_chunk,
-                visual_state_summary: data.visual_state_summary,
-                artifacts: data.artifacts
-              }
-            };
-            if (idx >= 0) {
-              const prevCli = next[idx]?.cli || {};
-              const appendedStdout = (prevCli.stdout || '') + (String(data.stdout_chunk || ''));
-              const appendedStderr = (prevCli.stderr || '') + (String(data.stderr_chunk || ''));
-              const finalStdout = typeof data.stdout === 'string' ? data.stdout : appendedStdout;
-              const finalStderr = typeof data.stderr === 'string' ? data.stderr : appendedStderr;
-              const startedAtMs =
-                Number(base?.cli?.started_at_ms) ||
-                Number(prevCli?.started_at_ms) ||
-                (status === 'running' ? nowMs : 0);
-              const timeoutS =
-                Number(base?.cli?.timeout_s) || Number(prevCli?.timeout_s) || 0;
-              const returnMs =
-                Number(base?.cli?.return_ms) || Number(prevCli?.return_ms) || 0;
-              next[idx] = {
-                ...next[idx],
-                ...base,
-                cli: {
-                  ...(prevCli || {}),
-                  ...(base.cli || {}),
-                  started_at_ms: startedAtMs,
-                  timeout_s: timeoutS,
-                  return_ms: returnMs,
-                  stdout: finalStdout,
-                  stderr: finalStderr
-                }
-              };
-              return next;
-            }
-            let parentIdx = -1;
-            for (let i = next.length - 1; i >= 0; i -= 1) {
-              const m = next[i];
-              if (!m) continue;
-              if (m.role !== 'assistant') continue;
-              if (m.streaming) continue;
-              if (m.cli_execution_id) continue;
-              parentIdx = i;
-              break;
-            }
-            if (parentIdx >= 0) {
-              const parent = next[parentIdx] || {};
-              const runs = { ...(parent.cli_runs || {}) };
-              const prevCli = runs[executionId] || {};
-              const startedAtMs =
-                Number(base?.cli?.started_at_ms) ||
-                Number(prevCli?.started_at_ms) ||
-                (status === 'running' ? nowMs : 0);
-              const timeoutS =
-                Number(base?.cli?.timeout_s) || Number(prevCli?.timeout_s) || 0;
-              const returnMs =
-                Number(base?.cli?.return_ms) || Number(prevCli?.return_ms) || 0;
-              runs[executionId] = {
-                ...prevCli,
-                ...(base.cli || {}),
-                started_at_ms: startedAtMs,
-                timeout_s: timeoutS,
-                return_ms: returnMs,
-              };
-              next[parentIdx] = { ...parent, cli_runs: runs };
-              return next;
-            }
-            if (!base?.cli?.started_at_ms && status === 'running') {
-              base.cli.started_at_ms = nowMs;
-            }
-            next.push(base);
-            return next;
-          });
-          setTimeout(() => {
-            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-          }, 0);
-        } else if (data.type === 'error') {
-          const txt = String(data.content || '').trim() || 'Erro no processamento.';
-          console.error('WebSocket error:', txt);
-          flushChunkBuffer();
-          setMessages((prev) => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last && last.role === 'assistant' && last.streaming) {
-              next[next.length - 1] = {
-                ...last,
-                content: txt,
-                streaming: false,
-              };
-              return next;
-            }
-            next.push({
-              role: 'assistant',
-              content: txt,
-              streaming: false,
-              id: `ws-error-${Date.now()}-${Math.random().toString(16).slice(2)}`
-            });
-            return next;
-          });
-          setStreaming(false);
-          setStreamStatusText('');
-        }
-      } catch (error) {
-        console.error('Error processing WebSocket message:', error);
-      }
-    };
-
-    ws.onclose = () => {
-      if (wsRef.current !== ws) return;
-      const wasStreaming = Boolean(streamingRef.current) || Boolean((chunkBufferRef.current || '').length);
-      setConnected(false);
-      setStreaming(false);
-      setStreamStatusText('');
-      flushChunkBuffer();
-      if (wasStreaming) {
-        setMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          const txt = 'Conexão perdida durante o processamento. Reabrindo…';
-          if (last && last.role === 'assistant' && last.streaming) {
-            next[next.length - 1] = { ...last, content: txt, streaming: false };
-            return next;
-          }
-          next.push({
-            role: 'assistant',
-            content: txt,
-            streaming: false,
-            id: `ws-close-${Date.now()}-${Math.random().toString(16).slice(2)}`
-          });
-          return next;
-        });
-      }
-      console.log('WebSocket desconectado');
-
-      // Tentar reconectar após 3 segundos
-      setTimeout(() => {
-        if (user) {
-          connectWebSocket();
-        }
-      }, 3000);
-    };
-
-    ws.onerror = (error) => {
-      if (wsRef.current !== ws) return;
-      console.error('WebSocket error:', error);
-      setConnected(false);
-      setStreaming(false);
-      setStreamStatusText('');
-    };
-  };
-
-  const sendMessage = () => {
-    if (!input.trim() || streaming || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    const now = Date.now();
-    const userMessage = {
-      role: 'user',
-      content: input.trim(),
-      id: `${now}-${Math.random().toString(16).slice(2)}`
-    };
-
-    setStreaming(true);
-
-    setMessages(prev => [
-      ...prev,
-      userMessage,
-      {
-        role: 'assistant',
-        content: '',
-        streaming: true,
-        id: `${now + 1}-${Math.random().toString(16).slice(2)}`
-      }
-    ]);
-    setInput('');
-
-    // Include active skill id and expert override
-    const activeSkill = (skills || []).find((s) => s.id === selectedSkillId) || null;
-    const agentPrompt = forceExpertId ? String(agentConfigs?.[forceExpertId]?.prompt || '').trim() : '';
-    wsRef.current.send(JSON.stringify({
-      type: 'chat',
-      content: input.trim(),
-      internal_prompt: agentPrompt || null,
-      skill_id: activeSkill?.id || null,
-      skill_web_search: activeSkill?.content?.web_search === true,
-      force_expert_id: forceExpertId || null
-    }));
-  };
+  const { connectWebSocket, sendMessage } = useChatSocket({
+    user,
+    token,
+    lang,
+    llmMode,
+    skills,
+    selectedSkillId,
+    forceExpertId,
+    agentConfigs,
+    showRoutingDebug,
+    currentConversation,
+    currentKind,
+    sessionIdRef: sessionId,
+    wsRef,
+    pendingAutoSendRef,
+    messagesEndRef,
+    setMessages,
+    input,
+    setInput,
+    setConnected,
+    setStreaming,
+    setStreamStatusText,
+    setRuntimeLlmLabel,
+    setLastExpertReason,
+    setLastExpertKeywords,
+    setShowExecutionPanel,
+    setActivePlanMessageId,
+    setActivePlanLocalMsgId,
+    pendingPlanTasksRef,
+    scheduleListsRefresh,
+    formatRuntimeLlmLabel,
+    parseAssistantDirectivesFromText,
+    runUiActions,
+    loadTaskTodos,
+    loadGlobalTodos,
+    loadTasks,
+    buildSysGlobalKernelPrompt,
+    maybeRepoDisambiguationInternalPrompt,
+    fetchRuntimeLlmLabel,
+    streaming,
+  });
 
   const goHome = () => {
     setMessages([]);
@@ -4648,6 +3160,10 @@ const App = () => {
     setChatSearch('');
     setConversationSearch('');
     setTasksSearch('');
+    try {
+      localStorage.removeItem('open_slap_current_conversation');
+    } catch {}
+    hasRestoredConversationRef.current = true;
     if (wsRef.current) {
       wsRef.current.close();
     }
@@ -4655,10 +3171,11 @@ const App = () => {
     connectWebSocket();
   };
 
-  const createNewConversation = async () => {
+  const createNewConversation = async (opts = {}) => {
     try {
       const headers = getAuthHeaders();
       headers['Content-Type'] = 'application/json';
+      const projectIdToLink = Number(opts.projectId || 0);
       const title = `Chat ${new Date().toLocaleString('en-GB', {
         day: '2-digit',
         month: '2-digit',
@@ -4684,13 +3201,18 @@ const App = () => {
         wsRef.current.close();
       }
       sessionId.current = data.session_id;
+      if (projectIdToLink) {
+        await assignConversationProject(data.conversation_id, projectIdToLink);
+      }
       connectWebSocket();
       // Carregar listas em segundo plano para evitar atraso na abertura do chat
       loadConversations().catch(() => {});
       loadTasks().catch(() => {});
 
+      return data;
     } catch (error) {
       console.error('Error creating conversation:', error);
+      return null;
     }
   };
 
@@ -4702,6 +3224,8 @@ const App = () => {
       const skillId = String(opts.skillId || '').trim();
       const internalPrompt = String(opts.internalPrompt || '').trim();
       const forceExpertIdOverride = String(opts.forceExpertId || '').trim();
+      const projectIdToLink = Number(opts.projectId || 0);
+      const kind = String(opts.kind || 'conversation').trim().toLowerCase();
       let prevSkill = '';
       if (skillId) {
         prevSkill = selectedSkillId;
@@ -4718,7 +3242,13 @@ const App = () => {
           pendingAutoSendRef.current = content;
         }
       }
-      await createNewConversation();
+      if (kind === 'task') {
+        await createNewTask(
+          projectIdToLink ? { projectId: projectIdToLink, skipPrefill: true } : { skipPrefill: true }
+        );
+      } else {
+        await createNewConversation(projectIdToLink ? { projectId: projectIdToLink } : {});
+      }
       if (skillId) {
         if (tempSkillResetTimerRef.current) {
           clearTimeout(tempSkillResetTimerRef.current);
@@ -4733,7 +3263,7 @@ const App = () => {
     }
   };
 
-  const parseAssistantDirectivesFromText = (text) => {
+  function parseAssistantDirectivesFromText(text) {
     const actions = [];
     const parts = [];
     const inputText = (text || '').toString();
@@ -4776,9 +3306,9 @@ const App = () => {
 
     const primary = cleanedParts[0]?.text || '';
     return { cleaned: primary, actions, parts: cleanedParts };
-  };
+  }
 
-  const runUiActions = (actions) => {
+  function runUiActions(actions) {
     if (!actions?.length) return;
     for (const a of actions) {
       if (a?.type === 'open_settings' && a?.target === 'llm_api_key') {
@@ -4792,7 +3322,7 @@ const App = () => {
         setForceExpertId('');
       }
     }
-  };
+  }
 
   const buildAgentsHelpPrompt = () => {
     const expertLines = (experts || [])
@@ -4919,10 +3449,12 @@ const App = () => {
     'Responda com perguntas e respostas objetivas.'
   );
 
-  const createNewTask = async () => {
+  const createNewTask = async (opts = {}) => {
     try {
       const headers = getAuthHeaders();
       headers['Content-Type'] = 'application/json';
+      const projectIdToLink = Number(opts.projectId || 0);
+      const skipPrefill = Boolean(opts.skipPrefill);
       const title = `Task ${new Date().toLocaleString('en-GB', {
         day: '2-digit',
         month: '2-digit',
@@ -4945,16 +3477,17 @@ const App = () => {
       setCenterView('chat');
       setChatSearch('');
 
-      // Pre-load CTO skill prompt so the user can describe the project immediately
-      const ctoSkill = (skills || []).find((s) => s.id === 'cto');
-      if (ctoSkill) {
-        const ctoPrompt =
-          typeof ctoSkill.content === 'object' && ctoSkill.content?.prompt
-            ? ctoSkill.content.prompt
-            : typeof ctoSkill.content === 'string'
-            ? ctoSkill.content
-            : '';
-        if (ctoPrompt) setInput(ctoPrompt);
+      if (!skipPrefill) {
+        const ctoSkill = (skills || []).find((s) => s.id === 'cto');
+        if (ctoSkill) {
+          const ctoPrompt =
+            typeof ctoSkill.content === 'object' && ctoSkill.content?.prompt
+              ? ctoSkill.content.prompt
+              : typeof ctoSkill.content === 'string'
+              ? ctoSkill.content
+              : '';
+          if (ctoPrompt) setInput(ctoPrompt);
+        }
       }
 
       await loadConversations();
@@ -4965,9 +3498,14 @@ const App = () => {
         wsRef.current.close();
       }
       sessionId.current = data.session_id;
+      if (projectIdToLink) {
+        await assignConversationProject(data.conversation_id, projectIdToLink);
+      }
       connectWebSocket();
+      return data;
     } catch (error) {
       console.error('Error creating task:', error);
+      return null;
     }
   };
 
@@ -5182,6 +3720,13 @@ const App = () => {
   };
 
   // Render dentro de um único Router
+  if (loading) {
+    return (
+      <div style={{ padding: '22px', fontFamily: 'var(--mono)', color: 'var(--text-dim)', fontSize: '12px' }}>
+        {t('loading')}
+      </div>
+    );
+  }
   return (
     <Router>
       <Routes>
@@ -5238,7 +3783,21 @@ const App = () => {
                       {commandModal?.cwd ? `CWD: ${commandModal.cwd}\n` : ''}
                       {`\nComando:\n${commandModal?.command || ''}\n`}
                     </div>
-                    <div style={{ ...styles.commandActions, justifyContent: 'flex-end' }}>
+                    <div style={{ ...styles.commandActions, justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
+                      <button
+                        style={{ ...styles.linkButton, fontSize: '12px' }}
+                        onClick={() => {
+                          setGenericModal({
+                            title: lang === 'pt' ? 'Permissões de comando' : 'Command permissions',
+                            body: lang === 'pt'
+                              ? 'Permitir apenas agora executa este comando uma única vez.\n\nPermitir automaticamente salva uma permissão para executar automaticamente este comando (idêntico) no futuro.\n\nUse “Permitir automaticamente” apenas para comandos de baixo risco e bem conhecidos.'
+                              : 'Allow only now executes this command once.\n\nAllow automatically saves a permission to auto-run this exact command in the future.\n\nUse “Allow automatically” only for low-risk, well-known commands.'
+                          });
+                        }}
+                      >
+                        {lang === 'pt' ? 'O que isso significa?' : 'What does this mean?'}
+                      </button>
+                      <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
                       <button style={styles.settingsSecondaryButton} onClick={() => setCommandModal(null)}>
                         {t('cancel')}
                       </button>
@@ -5247,8 +3806,23 @@ const App = () => {
                         onClick={() => executePendingCommand(commandModal)}
                         disabled={executingCommandId === commandModal?.id}
                       >
-                        {executingCommandId === commandModal?.id ? t('executing') : t('execute')}
+                        {executingCommandId === commandModal?.id
+                          ? t('executing')
+                          : (lang === 'pt' ? 'Permitir apenas agora' : 'Allow only now')}
                       </button>
+                      <button
+                        style={styles.settingsSecondaryButton}
+                        onClick={async () => {
+                          if (executingCommandId === commandModal?.id) return;
+                          const ok = await autoApprovePendingCommand(commandModal);
+                          if (!ok) return;
+                          await executePendingCommand(commandModal);
+                        }}
+                        disabled={executingCommandId === commandModal?.id}
+                      >
+                        {lang === 'pt' ? 'Permitir automaticamente' : 'Allow automatically'}
+                      </button>
+                    </div>
                     </div>
                   </div>
                 </div>
@@ -5309,29 +3883,254 @@ const App = () => {
                       <button style={styles.iconButton} onClick={() => setShowOnboarding(false)}>×</button>
                     </div>
                     <div style={styles.modalBody}>
-                      <div style={{ marginBottom: '16px', fontSize: '13px', color: 'var(--text)', lineHeight: 1.7 }}>
-                        {t('onboarding_intro')}
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '14px' }}>
+                        {[0, 1, 2, 3, 4, 5].map((i) => (
+                          <div
+                            key={i}
+                            style={{
+                              height: '8px',
+                              flex: 1,
+                              borderRadius: '999px',
+                              background: i === onboardingStep ? 'var(--accent)' : 'rgba(255,255,255,0.10)'
+                            }}
+                          />
+                        ))}
                       </div>
-                      {[
-                        [t('onboarding_step_task_title'), t('onboarding_step_task_desc')],
-                        [t('onboarding_step_skills_title'), t('onboarding_step_skills_desc')],
-                        [t('onboarding_step_connectors_title'), t('onboarding_step_connectors_desc')],
-                        [t('onboarding_step_feedback_title'), t('onboarding_step_feedback_desc')],
-                        [t('onboarding_step_projects_title'), t('onboarding_step_projects_desc')],
-                      ].map(([title, desc]) => (
-                        <div key={title} style={{ marginBottom: '12px' }}>
-                          <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--accent)', fontFamily: 'var(--sans)', marginBottom: '3px' }}>{title}</div>
-                          <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--sans)', lineHeight: 1.5 }}>{desc}</div>
+
+                      {onboardingError ? <div style={styles.settingsError}>{onboardingError}</div> : null}
+
+                      {onboardingStep === 0 ? (
+                        <div style={{ display: 'grid', gap: '10px' }}>
+                          <div style={{ fontSize: '13px', color: 'var(--text)', lineHeight: 1.7 }}>
+                            {t('language')}
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                            {[
+                              { id: 'en', label: 'English' },
+                              { id: 'pt', label: 'Português' },
+                              { id: 'es', label: 'Español' },
+                              { id: 'ar', label: 'العربية' },
+                              { id: 'zh', label: '中文' }
+                            ].map((opt) => {
+                              const active = String(lang) === opt.id;
+                              return (
+                                <button
+                                  key={opt.id}
+                                  style={{
+                                    ...styles.settingsSecondaryButton,
+                                    borderColor: active ? 'var(--accent)' : 'rgba(255,255,255,0.15)',
+                                    color: active ? 'var(--accent)' : 'var(--text)'
+                                  }}
+                                  onClick={() => {
+                                    setLang(opt.id);
+                                    saveLanguageSettings(opt.id);
+                                  }}
+                                >
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
-                      ))}
+                      ) : null}
+
+                      {onboardingStep === 1 ? (
+                        <div style={{ display: 'grid', gap: '10px' }}>
+                          <div style={{ fontSize: '13px', color: 'var(--text)', lineHeight: 1.7 }}>
+                            {t('onboarding_theme_prompt')}
+                          </div>
+                          <div style={{ display: 'grid', gap: '10px', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+                            {[
+                              { id: 'light', label: t('theme_light'), preview: ['#f5f5f5','#ffffff','#d97706'] },
+                              { id: 'deep-space', label: 'Deep Space', preview: ['#0b1220','#0e1626','#22d3ee'] },
+                              { id: 'midnight', label: 'Midnight', preview: ['#0a0a0a','#111111','#60a5fa'] }
+                            ].map((th) => {
+                              const isActive = String(theme) === th.id;
+                              return (
+                                <button
+                                  key={th.id}
+                                  style={{
+                                    ...styles.smallIconButton,
+                                    width: '100%',
+                                    padding: '10px',
+                                    borderRadius: '10px',
+                                    border: isActive ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.15)',
+                                    background: 'rgba(255,255,255,0.04)'
+                                  }}
+                                  onClick={() => {
+                                    setTheme(th.id);
+                                    try { localStorage.setItem('open_slap_theme_v1', th.id); } catch {}
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    {th.preview.map((c, i) => (
+                                      <div key={i} style={{ width: 12, height: 12, borderRadius: '50%', background: c, border: '1px solid rgba(255,255,255,0.15)' }} />
+                                    ))}
+                                    <div style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: th.preview[2], fontWeight: isActive ? 600 : 400, whiteSpace: 'nowrap' }}>
+                                      {th.label}
+                                    </div>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {onboardingStep === 2 ? (
+                        <div style={{ display: 'grid', gap: '10px' }}>
+                          <div style={{ fontSize: '13px', color: 'var(--text)', lineHeight: 1.7 }}>
+                            {t('onboarding_intro')}
+                          </div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-dim)', lineHeight: 1.6 }}>
+                            {t('onboarding_welcome_hint')}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {onboardingStep === 3 ? (
+                        <div style={{ display: 'grid', gap: '10px' }}>
+                          <div style={{ fontSize: '13px', color: 'var(--text)', lineHeight: 1.7 }}>
+                            {t('onboarding_profile_intro')}
+                          </div>
+                          <div style={{ display: 'grid', gap: '10px' }}>
+                            <div style={{ display: 'grid', gap: '6px' }}>
+                              <div style={{ fontSize: '12px', color: 'var(--text)', fontFamily: 'var(--mono)' }}>{t('name_label')}</div>
+                              <input
+                                style={styles.settingsInput}
+                                value={onboardingSoulDraft?.name || ''}
+                                onChange={(e) => setOnboardingSoulDraft((prev) => ({ ...(prev || {}), name: e.target.value }))}
+                              />
+                            </div>
+                            <div style={{ display: 'grid', gap: '6px' }}>
+                              <div style={{ fontSize: '12px', color: 'var(--text)', fontFamily: 'var(--mono)' }}>{t('age_range_label')}</div>
+                              <input
+                                style={styles.settingsInput}
+                                value={onboardingSoulDraft?.age_range || ''}
+                                onChange={(e) => setOnboardingSoulDraft((prev) => ({ ...(prev || {}), age_range: e.target.value }))}
+                                placeholder={t('age_range_placeholder')}
+                              />
+                            </div>
+                            <div style={{ display: 'grid', gap: '6px' }}>
+                              <div style={{ fontSize: '12px', color: 'var(--text)', fontFamily: 'var(--mono)' }}>{t('goals_label')}</div>
+                              <textarea
+                                style={{ ...styles.settingsTextarea, minHeight: '90px' }}
+                                value={onboardingSoulDraft?.goals || ''}
+                                onChange={(e) => setOnboardingSoulDraft((prev) => ({ ...(prev || {}), goals: e.target.value }))}
+                                placeholder={t('goals_placeholder')}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {onboardingStep === 4 ? (
+                        <div style={{ display: 'grid', gap: '10px' }}>
+                          <div style={{ fontSize: '13px', color: 'var(--text)', lineHeight: 1.7 }}>
+                            {t('onboarding_llm_intro')}
+                          </div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-dim)', lineHeight: 1.6 }}>
+                            {t('onboarding_llm_hint')}
+                          </div>
+                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                            <button
+                              style={styles.settingsSecondaryButton}
+                              onClick={() => {
+                                pendingSettingsActionRef.current = 'llm_api_key';
+                                setShowOnboarding(false);
+                                setCenterView('settings');
+                              }}
+                            >
+                              {t('onboarding_open_llm_settings')}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {onboardingStep === 5 ? (
+                        <div style={{ display: 'grid', gap: '12px' }}>
+                          <div style={{ fontSize: '13px', color: 'var(--text)', lineHeight: 1.7 }}>
+                            {t('onboarding_how_to_start')}
+                          </div>
+                          {[
+                            [t('onboarding_step_task_title'), t('onboarding_step_task_desc')],
+                            [t('onboarding_step_skills_title'), t('onboarding_step_skills_desc')],
+                            [t('onboarding_step_connectors_title'), t('onboarding_step_connectors_desc')]
+                          ].map(([title, desc]) => (
+                            <div key={title} style={{ marginBottom: '8px' }}>
+                              <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--accent)', fontFamily: 'var(--sans)', marginBottom: '3px' }}>{title}</div>
+                              <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--sans)', lineHeight: 1.5 }}>{desc}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                     <div style={{ ...styles.commandActions, justifyContent: 'flex-end' }}>
-                      <button style={styles.settingsPrimaryButton} onClick={() => { setShowOnboarding(false); createNewTask(); }}>
-                        {t('onboarding_start_first_task')}
-                      </button>
-                      <button style={styles.settingsSecondaryButton} onClick={() => setShowOnboarding(false)}>
+                      <button
+                        style={styles.settingsSecondaryButton}
+                        onClick={() => setShowOnboarding(false)}
+                        disabled={onboardingActionLoading}
+                      >
                         {t('onboarding_explore')}
                       </button>
+                      <button
+                        style={styles.settingsSecondaryButton}
+                        onClick={() => setShowOnboarding(false)}
+                        disabled={onboardingActionLoading}
+                      >
+                        {t('onboarding_skip')}
+                      </button>
+                      <button
+                        style={styles.settingsSecondaryButton}
+                        onClick={async () => {
+                          await completeOnboarding();
+                          setShowOnboarding(false);
+                        }}
+                        disabled={onboardingActionLoading}
+                      >
+                        {t('onboarding_dont_show')}
+                      </button>
+                      {onboardingStep > 0 ? (
+                        <button
+                          style={styles.settingsSecondaryButton}
+                          onClick={() => setOnboardingStep((s) => Math.max(0, (Number(s) || 0) - 1))}
+                          disabled={onboardingActionLoading}
+                        >
+                          {t('onboarding_back')}
+                        </button>
+                      ) : null}
+                      {onboardingStep < 5 ? (
+                        <button
+                          style={styles.settingsPrimaryButton}
+                          onClick={async () => {
+                            if (onboardingStep === 0) {
+                              try { await saveLanguageSettings(lang); } catch {}
+                            }
+                            if (onboardingStep === 3) {
+                              const ok = await saveOnboardingSoulDraft();
+                              if (!ok) return;
+                            }
+                            setOnboardingStep((s) => Math.min(5, (Number(s) || 0) + 1));
+                          }}
+                          disabled={onboardingSoulSaving || onboardingActionLoading}
+                        >
+                          {onboardingSoulSaving ? t('saving') : t('onboarding_next')}
+                        </button>
+                      ) : (
+                        <button
+                          style={styles.settingsPrimaryButton}
+                          onClick={() => {
+                            setShowOnboarding(false);
+                            startNewConversationWithPrompt(
+                              lang === 'pt' ? 'Quero iniciar um novo projeto.' : 'I want to start a new project.',
+                              { internalPrompt: buildStartProjectPrompt(), forceExpertId: 'general' }
+                            );
+                          }}
+                          disabled={onboardingActionLoading}
+                        >
+                          {t('onboarding_start_first_task')}
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -5804,96 +4603,26 @@ const App = () => {
                   {centerView === 'conversations' ? (
                     <div style={styles.centerPanel}>
                       <div style={styles.centerPanelTitle}>{t('conversations')}</div>
-                      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
-                        <input
-                          style={{ ...styles.chatSearchInput, width: '100%' }}
-                          value={conversationSearch}
-                          onChange={(e) => setConversationSearch(e.target.value)}
-                          placeholder={t('search_conversations_placeholder')}
-                        />
-                        {conversationSearch.trim() ? (
-                          <button style={styles.chatSearchClear} onClick={() => setConversationSearch('')}>
-                            {t('clear')}
+                      {conversations.length ? (
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
+                          <input
+                            style={{ ...styles.chatSearchInput, width: '100%' }}
+                            value={conversationSearch}
+                            onChange={(e) => setConversationSearch(e.target.value)}
+                            placeholder={t('search_conversations_placeholder')}
+                          />
+                          {conversationSearch.trim() ? (
+                            <button style={styles.chatSearchClear} onClick={() => setConversationSearch('')}>
+                              {t('clear')}
+                            </button>
+                          ) : null}
+                          <button style={styles.settingsPrimaryButton} onClick={createNewConversation}>
+                            {t('new_conversation')}
                           </button>
-                        ) : null}
-                        <button style={styles.settingsPrimaryButton} onClick={createNewConversation}>
-                          {t('new_conversation')}
-                        </button>
-                      </div>
-                      {conversations.length === 0 ? (
-                        <div style={{ maxWidth: '920px', width: '100%', margin: '0 auto' }}>
-                          <div style={{ ...styles.lightCard, border: '1px solid rgba(255,255,255,0.10)' }}>
-                            <pre
-                              style={{
-                                fontFamily: OPEN_SLAP_ASCII_FONT,
-                                fontSize: isMobile ? '10px' : '12px',
-                                lineHeight: 1.35,
-                                whiteSpace: 'pre',
-                                fontVariantLigatures: 'none',
-                                letterSpacing: '0',
-                                color: 'var(--text)',
-                                opacity: 0.95,
-                                overflowX: 'auto',
-                                maxWidth: '100%',
-                                width: '100%',
-                                margin: 0
-                              }}
-                            >
-                              {OPEN_SLAP_ASCII}
-                            </pre>
-                            <div style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text)', fontFamily: 'var(--sans)' }}>
-                              Open Slap! é um core agêntico open source e gratuito para organizar tarefas, planejar projetos e executar fluxos com múltiplos agentes.
-                            </div>
-                            <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
-                              Exemplos práticos (clique para preencher):
-                            </div>
-                            <div style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                              <button
-                                style={styles.settingsSecondaryButton}
-                                onClick={() => setInput('Quero que você organize minhas tarefas pendentes. Vou listar agora e você transforma em um TODO com prioridades.')}
-                              >
-                                Assistente pessoal (tarefas)
-                              </button>
-                              <button
-                                style={styles.settingsSecondaryButton}
-                                onClick={() => setInput('Preciso planejar um projeto web do zero. Faça perguntas para entender escopo, prazo e restrições.')}
-                              >
-                                Planejar projeto web
-                              </button>
-                              <button
-                                style={styles.settingsSecondaryButton}
-                                onClick={() => setInput('Quero organizar minhas finanças do mês. Me guie com um passo a passo e um checklist.')}
-                              >
-                                Organizar finanças
-                              </button>
-                              <button
-                                style={styles.settingsSecondaryButton}
-                                onClick={() => {
-                                  setCenterView('settings');
-                                  setSettingsTab('team');
-                                }}
-                              >
-                                {t('open_agents_in_settings')}
-                              </button>
-                            </div>
-                            <div style={{ marginTop: '12px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                              <button style={styles.settingsPrimaryButton} onClick={createNewConversation}>
-                                {t('new_conversation')}
-                              </button>
-                              <button
-                                style={{
-                                  ...styles.settingsSecondaryButton,
-                                  background: '#ffffff',
-                                  color: '#000000',
-                                  border: '1px solid rgba(0,0,0,0.15)'
-                                }}
-                                onClick={() => window.open(OPEN_SLAP_REPO_URL, '_blank')}
-                              >
-                                GitHub — conheça o projeto
-                              </button>
-                            </div>
-                          </div>
                         </div>
+                      ) : null}
+                      {conversations.length === 0 ? (
+                        renderBootScreen()
                       ) : (
                         conversationSearch.trim() ? (
                           <div style={{ display: 'grid', gap: '10px' }}>
@@ -6048,8 +4777,25 @@ const App = () => {
 
                       {tasksTab === 'project' ? (
                         <div style={styles.lightCard}>
-                          <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
-                            {lang === 'pt' ? 'PROJETO (KICKOFF)' : 'PROJECT (KICKOFF)'}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+                              {lang === 'pt' ? 'PROJETO (KICKOFF)' : 'PROJECT (KICKOFF)'}
+                            </div>
+                            <button
+                              style={styles.smallIconButton}
+                              onClick={() => {
+                                setGenericModal({
+                                  title: lang === 'pt' ? 'Como usar o Kickoff' : 'How to use Kickoff',
+                                  body:
+                                    lang === 'pt'
+                                      ? '1) Crie/ative um projeto\n2) Importe um arquivo .md com o contexto\n3) O sistema gera um plano (bloco ```plan)\n4) Clique Aprovar para criar o backlog (TODOs) e iniciar a execução\n\nDica: use os templates em docs/kickoff_templates/.'
+                                      : '1) Create/activate a project\n2) Import a .md file with context\n3) The system emits a plan (```plan block)\n4) Click Approve to create the backlog (TODOs) and start execution\n\nTip: use templates in docs/kickoff_templates/.'
+                                });
+                              }}
+                              title={lang === 'pt' ? 'Como usar' : 'How to use'}
+                            >
+                              ?
+                            </button>
                           </div>
                           <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--sans)' }}>
                             {lang === 'pt'
@@ -6057,70 +4803,133 @@ const App = () => {
                               : 'This is the global kickoff artifact: one Markdown context per project. Sabrina can generate/update this content during project kickoff.'}
                           </div>
 
-                          <div style={{ display: 'grid', gap: '8px', marginTop: '10px' }}>
-                            {projects.map((proj) => (
-                              <div
-                                key={proj.id}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '10px',
-                                  padding: '8px 12px',
-                                  background: 'var(--bg3)',
-                                  borderRadius: '8px',
-                                  border: activeProjectId === proj.id ? '1px solid var(--accent)' : '1px solid var(--border)'
+                          <div style={{ marginTop: '10px', padding: '10px 12px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: '8px' }}>
+                            <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+                              {lang === 'pt' ? 'CRIAR NOVO PROJETO' : 'CREATE NEW PROJECT'}
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                              <input
+                                id="new-project-name-task"
+                                style={{ ...styles.settingsInput, flex: 1 }}
+                                placeholder={lang === 'pt' ? 'Nome do novo projeto…' : 'New project name…'}
+                              />
+                              <button
+                                style={styles.settingsPrimaryButton}
+                                onClick={async () => {
+                                  const el = document.getElementById('new-project-name-task');
+                                  const name = (el?.value || '').trim();
+                                  if (!name) return;
+                                  const pid = await createProject(name);
+                                  if (pid) {
+                                    setActiveProjectId(pid);
+                                    if (currentConversation) assignConversationProject(currentConversation, pid);
+                                    setTimeout(() => {
+                                      const fileEl = document.getElementById('kickoff-file-input');
+                                      if (fileEl && typeof fileEl.scrollIntoView === 'function') {
+                                        fileEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                      }
+                                    }, 0);
+                                  }
+                                  if (el) el.value = '';
                                 }}
                               >
-                                <div style={{ flex: 1, fontSize: '13px', color: 'var(--text)', fontFamily: 'var(--sans)' }}>
-                                  📁 {proj.name}
-                                </div>
-                                <button
-                                  style={styles.settingsSecondaryButton}
-                                  onClick={() => {
-                                    setActiveProjectId(proj.id);
-                                    setProjectContextDraft(String(proj?.context_md || ''));
-                                    if (currentConversation) assignConversationProject(currentConversation, proj.id);
-                                  }}
-                                >
-                                  {activeProjectId === proj.id ? (lang === 'pt' ? 'Ativo' : 'Active') : (lang === 'pt' ? 'Ativar' : 'Set active')}
-                                </button>
-                              </div>
-                            ))}
-                            {projects.length === 0 ? (
-                              <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
-                                {lang === 'pt' ? 'Nenhum projeto ainda.' : 'No projects yet.'}
-                              </div>
-                            ) : null}
+                                {lang === 'pt' ? 'Criar' : 'Create'}
+                              </button>
+                            </div>
                           </div>
 
-                          <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-                            <input
-                              id="new-project-name-task"
-                              style={{ ...styles.settingsInput, flex: 1 }}
-                              placeholder={lang === 'pt' ? 'Nome do novo projeto…' : 'New project name…'}
-                            />
-                            <button
-                              style={styles.settingsPrimaryButton}
-                              onClick={async () => {
-                                const el = document.getElementById('new-project-name-task');
-                                const name = (el?.value || '').trim();
-                                if (!name) return;
-                                const pid = await createProject(name);
-                                if (pid) {
-                                  setActiveProjectId(pid);
-                                  if (currentConversation) assignConversationProject(currentConversation, pid);
-                                }
-                                if (el) el.value = '';
-                              }}
-                            >
-                              {lang === 'pt' ? 'Criar' : 'Create'}
-                            </button>
+                          <div style={{ marginTop: '10px', padding: '10px 12px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)', borderRadius: '8px' }}>
+                            <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+                              {lang === 'pt' ? 'MEUS PROJETOS' : 'YOUR PROJECTS'}
+                            </div>
+                            <div style={{ display: 'grid', gap: '8px', marginTop: '10px' }}>
+                              {projects.map((proj) => (
+                                <div
+                                  key={proj.id}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '10px',
+                                    padding: '8px 12px',
+                                    background: 'var(--bg3)',
+                                    borderRadius: '8px',
+                                    border: activeProjectId === proj.id ? '1px solid var(--accent)' : '1px solid var(--border)'
+                                  }}
+                                >
+                                  <div style={{ flex: 1, fontSize: '13px', color: 'var(--text)', fontFamily: 'var(--sans)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    📁 {proj.name}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                    <button
+                                      style={styles.settingsSecondaryButton}
+                                      onClick={() => {
+                                        setActiveProjectId(proj.id);
+                                        setProjectContextDraft(String(proj?.context_md || ''));
+                                        if (currentConversation) assignConversationProject(currentConversation, proj.id);
+                                      }}
+                                    >
+                                      {activeProjectId === proj.id ? (lang === 'pt' ? 'Ativo' : 'Active') : (lang === 'pt' ? 'Ativar' : 'Set active')}
+                                    </button>
+                                    <button
+                                      style={styles.smallIconButton}
+                                      title={lang === 'pt' ? 'Renomear' : 'Rename'}
+                                      onClick={() => openRename('project', { id: proj.id, title: proj.name })}
+                                    >
+                                      ✎
+                                    </button>
+                                    <button
+                                      style={styles.smallIconButton}
+                                      title={lang === 'pt' ? 'Excluir' : 'Delete'}
+                                      onClick={() => {
+                                        setGenericModal({
+                                          title: lang === 'pt' ? 'Excluir projeto?' : 'Delete project?',
+                                          body: lang === 'pt'
+                                            ? `Excluir "${proj.name}"? Isso remove o projeto e desvincula conversas/tarefas associadas.`
+                                            : `Delete "${proj.name}"? This removes the project and unlinks associated conversations/tasks.`,
+                                          onConfirm: async () => {
+                                            const ok = await deleteProject(proj.id);
+                                            if (!ok) {
+                                              setGenericModal({
+                                                title: t('error'),
+                                                body: lang === 'pt' ? 'Não foi possível excluir o projeto.' : 'Could not delete the project.'
+                                              });
+                                            }
+                                          }
+                                        });
+                                      }}
+                                    >
+                                      🗑
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                              {projects.length === 0 ? (
+                                <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+                                  {lang === 'pt' ? 'Nenhum projeto ainda.' : 'No projects yet.'}
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
 
                           {activeProjectId ? (
                             <div style={{ marginTop: '12px' }}>
                               <div style={styles.settingsLabel}>
                                 {lang === 'pt' ? 'Contexto do projeto (Markdown)' : 'Project context (Markdown)'}
+                              </div>
+                              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '8px', flexWrap: 'wrap' }}>
+                                <input
+                                  id="kickoff-file-input"
+                                  type="file"
+                                  accept=".txt,.md"
+                                  style={{ ...styles.settingsInput, flex: 1, paddingTop: '8px', paddingBottom: '8px' }}
+                                  disabled={settingsLoading || projectContextSaving || !activeProjectId}
+                                  onChange={(e) => {
+                                    const file = e.target.files && e.target.files[0];
+                                    e.target.value = '';
+                                    if (!file) return;
+                                    ingestKickoffFileToProjectContext(file);
+                                  }}
+                                />
                               </div>
                               <textarea
                                 style={{ ...styles.settingsTextarea, minHeight: '150px', marginTop: '6px' }}
@@ -6295,11 +5104,50 @@ const App = () => {
                           <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
                             {t('global_todo')}
                           </div>
+                          <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                            {[
+                              { id: 'project', label: t('todo_scope_project') },
+                              { id: 'personal', label: t('todo_scope_personal') },
+                              { id: 'all', label: t('todo_scope_all') },
+                            ].map((opt) => {
+                              const active = String(globalTodoScope) === opt.id;
+                              return (
+                                <button
+                                  key={opt.id}
+                                  style={{
+                                    ...styles.settingsSecondaryButton,
+                                    borderColor: active ? 'var(--accent)' : 'rgba(255,255,255,0.15)',
+                                    color: active ? 'var(--accent)' : 'var(--text)'
+                                  }}
+                                  onClick={() => setGlobalTodoScope(opt.id)}
+                                >
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                            <button
+                              style={{
+                                ...styles.settingsSecondaryButton,
+                                borderColor: globalTodoShowAgent ? 'var(--accent)' : 'rgba(255,255,255,0.15)',
+                                color: globalTodoShowAgent ? 'var(--accent)' : 'var(--text)'
+                              }}
+                              onClick={() => setGlobalTodoShowAgent((v) => !v)}
+                            >
+                              {t('todo_show_agent')}
+                            </button>
+                          </div>
                           {globalTodos.length ? (
                             <div style={{ display: 'grid', gap: '8px', marginTop: '10px' }}>
                               {(() => {
+                                const filtered = (globalTodos || []).filter((td) => {
+                                  const scope = getTodoScope(td);
+                                  const actor = getTodoActor(td);
+                                  if (!globalTodoShowAgent && actor === 'agent') return false;
+                                  if (String(globalTodoScope) === 'all') return true;
+                                  return scope === String(globalTodoScope);
+                                });
                                 const groups = {};
-                                for (const td of (globalTodos || [])) {
+                                for (const td of filtered) {
                                   const cid = String(td?.conversation_id ?? '');
                                   if (!cid) continue;
                                   if (!groups[cid]) groups[cid] = [];
@@ -6315,6 +5163,10 @@ const App = () => {
                                 const renderNode = (node, depth, ctx) => {
                                   const artifacts = getTodoArtifacts(node);
                                   const deliveryPath = String(node.delivery_path || '').trim();
+                                  const scope = getTodoScope(node);
+                                  const actor = getTodoActor(node);
+                                  const actorLabel = actor === 'agent' ? (lang === 'pt' ? 'agente' : 'agent') : (lang === 'pt' ? 'humano' : 'human');
+                                  const scopeLabel = scope === 'personal' ? t('todo_scope_personal') : t('todo_scope_project');
                                   const originConversationId = node?.source_conversation_id;
                                   const originSessionId = node?.source_session_id;
                                   const originConversationKind = String(node?.source_conversation_kind || '').trim();
@@ -6360,7 +5212,7 @@ const App = () => {
                                                 </div>
                                               ) : null}
                                               <div style={styles.conversationMeta}>
-                                                {ctx.taskTitle} • {formatCompactDateTime(node.created_at)}
+                                                {ctx.taskTitle} • {scopeLabel} • {actorLabel} • {formatCompactDateTime(node.created_at)}
                                               </div>
                                               {hasOrigin ? (
                                                 <div style={{ ...styles.conversationMeta, marginTop: '2px' }}>
@@ -6774,6 +5626,7 @@ const App = () => {
                         {[
                           { id: 'appearance', label: t('theme') },
                           { id: 'llm', label: t('llm_providers') },
+                          { id: 'system', label: t('system') },
                           { id: 'security', label: t('security') },
                           { id: 'connectors', label: t('connectors') || 'Conectores' },
                           { id: 'memory', label: t('memory') },
@@ -6894,449 +5747,106 @@ const App = () => {
                                 </select>
                               </div>
                             </div>
-                          </div>
-
-                          <div style={styles.settingsSection}>
-                            <div style={styles.settingsSectionTitle}>{t('doctor_diagnostics')}</div>
-                            {doctorError ? (
-                              <div style={styles.settingsError}>{doctorError}</div>
-                            ) : null}
-
-                            <div style={styles.doctorCard}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-                                <div style={{ fontSize: '12px', color: 'var(--text)', fontFamily: 'var(--sans)' }}>
-                                  {doctorReport
-                                    ? (doctorReport.ok ? t('doctor_all_ok') : t('doctor_some_attention'))
-                                    : t('doctor_click_run')}
-                                </div>
-                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                                  <button
-                                    style={styles.settingsSecondaryButton}
-                                    onClick={() => {
-                                      refreshSystemProfile().finally(() => fetchDoctorReport({ silent: true }));
-                                    }}
-                                    disabled={settingsLoading || doctorLoading}
-                                  >
-                                    {t('update_profile')}
-                                  </button>
-                                  <button
-                                    style={styles.settingsPrimaryButton}
-                                    onClick={() => fetchDoctorReport({ silent: false })}
-                                    disabled={settingsLoading || doctorLoading}
-                                  >
-                                    {doctorLoading ? t('running') : t('run_diagnostics')}
-                                  </button>
-                                </div>
-                              </div>
-
-                              {doctorReport?.checks?.length ? (
-                                <div style={{ marginTop: '10px' }}>
-                                  {doctorReport.checks.map((c, idx) => {
-                                    const ok = Boolean(c.ok);
-                                    const isLast = idx === doctorReport.checks.length - 1;
-                                    const statusStyle = {
-                                      ...styles.doctorStatus,
-                                      borderColor: ok ? 'rgba(34, 197, 94, 0.45)' : 'rgba(248, 113, 113, 0.45)',
-                                      color: ok ? 'var(--green)' : 'var(--red)',
-                                      background: ok ? 'rgba(34, 197, 94, 0.10)' : 'rgba(248, 113, 113, 0.10)'
-                                    };
-                                    return (
-                                      <div
-                                        key={c.id || idx}
-                                        style={{ ...styles.doctorRow, ...(isLast ? styles.doctorRowLast : {}) }}
-                                      >
-                                        <div style={{ flex: 1 }}>
-                                          <div style={styles.doctorLabel}>{c.label || c.id}</div>
-                                          {c.detail ? <div style={styles.doctorDetail}>{c.detail}</div> : null}
-                                        </div>
-                                        <div style={statusStyle}>{ok ? 'OK' : t('status_failed')}</div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              ) : null}
-
-                              {doctorReport?.recommendations?.length ? (
-                                <div style={{ marginTop: '12px' }}>
-                                  <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--mono)', marginBottom: '8px' }}>
-                                    {t('recommendations')}
-                                  </div>
-                                  <div style={{ display: 'grid', gap: '6px' }}>
-                                    {doctorReport.recommendations.map((r, i) => (
-                                      <div key={i} style={{ fontSize: '12px', color: 'var(--text)', fontFamily: 'var(--sans)' }}>
-                                        {r}
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : null}
+                            <div style={{ marginTop: '10px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                              <button
+                                style={styles.settingsSecondaryButton}
+                                onClick={async () => {
+                                  await resetOnboarding();
+                                  setShowOnboarding(true);
+                                }}
+                                disabled={settingsLoading}
+                              >
+                                {t('reopen_onboarding')}
+                              </button>
                             </div>
                           </div>
+
                         </>
+                      ) : null}
+
+                      {settingsTab === 'system' ? (
+                        <SystemSettingsPanel
+                          styles={styles}
+                          t={t}
+                          lang={lang}
+                          settingsLoading={settingsLoading}
+                          doctorError={doctorError}
+                          doctorReport={doctorReport}
+                          doctorLoading={doctorLoading}
+                          refreshSystemProfile={refreshSystemProfile}
+                          fetchDoctorReport={fetchDoctorReport}
+                          getDoctorLabel={getDoctorLabel}
+                          setSettingsTab={setSettingsTab}
+                          systemMapLoading={systemMapLoading}
+                          systemMapError={systemMapError}
+                          systemMapUpdatedAt={systemMapUpdatedAt}
+                          systemMapText={systemMapText}
+                          fetchSystemMap={fetchSystemMap}
+                        />
                       ) : null}
 
                       {settingsTab === 'llm' ? (
-                        <>
-                          <div style={styles.settingsSection}>
-                            <div style={styles.settingsSectionTitle}>{t('llm_free_keys_title')}</div>
-                            <div style={styles.settingsHint}>{t('llm_free_keys_body')}</div>
-                            <div style={{ marginTop: '10px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                              <button
-                                style={{ ...styles.settingsSecondaryButton, background: '#fff', color: '#000', border: '1px solid rgba(0,0,0,0.15)' }}
-                                onClick={() => window.open('https://aistudio.google.com/app/apikey', '_blank')}
-                              >
-                                {t('llm_free_keys_gemini')}
-                              </button>
-                              <button
-                                style={{ ...styles.settingsSecondaryButton, background: '#fff', color: '#000', border: '1px solid rgba(0,0,0,0.15)' }}
-                                onClick={() => window.open('https://console.groq.com/keys', '_blank')}
-                              >
-                                {t('llm_free_keys_groq')}
-                              </button>
-                              <button
-                                style={{ ...styles.settingsSecondaryButton, background: '#fff', color: '#000', border: '1px solid rgba(0,0,0,0.15)' }}
-                                onClick={() => window.open('https://openrouter.ai/keys', '_blank')}
-                              >
-                                {t('llm_free_keys_openrouter')}
-                              </button>
-                            </div>
-                          </div>
-
-                          <div style={styles.settingsSection}>
-                            <div style={styles.settingsSectionTitle}>{t('llm_settings_title')}</div>
-
-                            <div style={styles.settingsGrid}>
-                              <div style={styles.settingsField}>
-                                <div style={styles.settingsLabel}>{t('mode')}</div>
-                                <select
-                                  style={styles.settingsInput}
-                                  value={llmMode}
-                                  onChange={(e) => setLlmMode(e.target.value)}
-                                  disabled={settingsLoading}
-                                >
-                                  <option value="env">{t('server_default')}</option>
-                                  <option value="api">{t('api_cloud')}</option>
-                                  <option value="local">{t('local_ollama')}</option>
-                                </select>
-                              </div>
-
-                              <div style={styles.settingsField}>
-                                <div style={styles.settingsLabel}>{t('provider')}</div>
-                                <select
-                                  style={styles.settingsInput}
-                                  value={llmProvider}
-                                  onChange={(e) => setLlmProvider(e.target.value)}
-                                  disabled={settingsLoading}
-                                >
-                                  {llmMode === 'local' ? (
-                                    <option value="ollama">Ollama</option>
-                                  ) : (
-                                    <>
-                                      <option value="openai">OpenAI</option>
-                                      <option value="groq">Groq</option>
-                                      <option value="gemini">Gemini</option>
-                                    </>
-                                  )}
-                                </select>
-                              </div>
-
-                              <div style={styles.settingsField}>
-                                <div style={styles.settingsLabel}>{t('model')}</div>
-                                <input
-                                  style={styles.settingsInput}
-                                  value={llmModel}
-                                  onChange={(e) => setLlmModel(e.target.value)}
-                                  placeholder={llmMode === 'local' ? 'ex.: llama3.2' : 'ex.: gpt-4o-mini'}
-                                  disabled={settingsLoading}
-                                />
-                              </div>
-
-                              <div style={styles.settingsField}>
-                                <div style={styles.settingsLabel}>{t('base_url')}</div>
-                                <input
-                                  style={styles.settingsInput}
-                                  value={llmBaseUrl}
-                                  onChange={(e) => setLlmBaseUrl(e.target.value)}
-                                  placeholder={llmMode === 'local' ? 'http://localhost:11434' : 'opcional'}
-                                  disabled={settingsLoading}
-                                />
-                              </div>
-
-                              {llmMode === 'api' ? (
-                                <div style={{ ...styles.settingsField, gridColumn: '1 / -1' }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
-                                    <div style={styles.settingsLabel}>{t('api_key')}</div>
-                                    <button
-                                      style={styles.settingsSecondaryButton}
-                                      onClick={() => {
-                                        setLlmApiKeyOpen((v) => {
-                                          const next = !v;
-                                          if (!v && next) {
-                                            setTimeout(() => {
-                                              if (llmApiKeyInputRef.current) {
-                                                try {
-                                                  llmApiKeyInputRef.current.focus();
-                                                } catch {}
-                                              }
-                                            }, 50);
-                                          }
-                                          return next;
-                                        });
-                                      }}
-                                      disabled={settingsLoading}
-                                    >
-                                      {llmApiKeyOpen ? t('api_key_close') : (llmHasApiKey ? t('api_key_switch') : t('api_key_register'))}
-                                    </button>
-                                  </div>
-
-                                  {llmApiKeyOpen ? (
-                                    <input
-                                      ref={llmApiKeyInputRef}
-                                      style={styles.settingsInput}
-                                      value={llmApiKey}
-                                      onChange={(e) => setLlmApiKey(e.target.value)}
-                                      placeholder={t('api_key_placeholder')}
-                                      disabled={settingsLoading}
-                                    />
-                                  ) : (
-                                    <div style={styles.settingsHint}>
-                                      {llmHasApiKey
-                                        ? (
-                                          llmApiKeySource === 'env'
-                                            ? t('llm_api_key_hint_env')
-                                            : t('llm_api_key_hint_saved')
-                                        )
-                                        : t('llm_api_key_hint_none')}
-                                    </div>
-                                  )}
-                                  <div style={styles.settingsHint}>
-                                    {t('llm_api_key_hint_storage')}
-                                  </div>
-                                  <div style={styles.settingsHint}>
-                                    {t('llm_api_key_warning_shared')}
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
-
-                            <div style={styles.settingsActions}>
-                              {llmMode === 'api' ? (
-                                <button
-                                  style={styles.settingsSecondaryButton}
-                                  onClick={() => {
-                                    removeLlmApiKey();
-                                  }}
-                                  disabled={settingsLoading || (!llmHasStoredApiKey && llmHasEnvApiKey)}
-                                >
-                                  {(!llmHasStoredApiKey && llmHasEnvApiKey) ? t('llm_key_from_env') : t('llm_remove_key')}
-                                </button>
-                              ) : null}
-                              <button
-                                style={styles.settingsPrimaryButton}
-                                onClick={saveLlmSettings}
-                                disabled={settingsLoading}
-                              >
-                                {settingsLoading ? t('llm_saving') : t('save_llm')}
-                              </button>
-                            </div>
-                          </div>
-
-                          <div style={styles.settingsSection}>
-                            <div style={styles.settingsSectionTitle}>{t('configured_providers')}</div>
-                            {providerStatusError ? (
-                              <div style={styles.settingsError}>{providerStatusError}</div>
-                            ) : null}
-                            <div style={{ display: 'grid', gap: '6px', marginTop: '8px' }}>
-                              {(providerStatusList || []).map((p) => {
-                                const online = Boolean(p.online);
-                                const enabled = Boolean(p.enabled);
-                                const dotColor = enabled ? (online ? 'var(--green)' : 'var(--red)') : 'rgba(212,212,212,0.35)';
-                                return (
-                                  <div
-                                    key={p.id || p.name}
-                                    style={{
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: '10px',
-                                      padding: '8px 0',
-                                      borderBottom: '1px solid var(--border)',
-                                      fontSize: '13px',
-                                      fontFamily: 'var(--mono)'
-                                    }}
-                                  >
-                                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
-                                    <span>{p.name || p.id}</span>
-                                    <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '999px', background: enabled ? 'rgba(245,166,35,0.12)' : 'rgba(212,212,212,0.10)', color: enabled ? 'var(--amber)' : 'var(--text-dim)' }}>
-                                      {enabled ? t('provider_enabled') : t('provider_disabled')}
-                                    </span>
-                                    <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '999px', background: 'rgba(127,119,221,0.12)', color: '#7F77DD' }}>
-                                      {t('provider_keys')}: {Number(p.keys_count) || 0}
-                                    </span>
-                                    <span style={{ marginLeft: 'auto', color: 'var(--text-dim)', fontSize: '11px' }}>
-                                      {p.model || ''}
-                                    </span>
-                                  </div>
-                                );
-                              })}
-                              {!providerStatusLoading && (!providerStatusList || providerStatusList.length === 0) ? (
-                                <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
-                                  {t('no_provider_status')}
-                                </div>
-                              ) : null}
-                            </div>
-                            <div style={{ marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                              <button
-                                style={styles.settingsSecondaryButton}
-                                onClick={loadProviderStatus}
-                                disabled={providerStatusLoading}
-                              >
-                                {providerStatusLoading ? 'Testando...' : 'Testar conexão'}
-                              </button>
-                            </div>
-                          </div>
-                        </>
+                        <LlmSettingsPanel
+                          styles={styles}
+                          t={t}
+                          lang={lang}
+                          settingsLoading={settingsLoading}
+                          llmMode={llmMode}
+                          setLlmMode={setLlmMode}
+                          llmProvider={llmProvider}
+                          setLlmProvider={setLlmProvider}
+                          llmModel={llmModel}
+                          setLlmModel={setLlmModel}
+                          llmBaseUrl={llmBaseUrl}
+                          setLlmBaseUrl={setLlmBaseUrl}
+                          llmApiKey={llmApiKey}
+                          setLlmApiKey={setLlmApiKey}
+                          llmHasApiKey={llmHasApiKey}
+                          llmApiKeySource={llmApiKeySource}
+                          llmApiKeyOpen={llmApiKeyOpen}
+                          setLlmApiKeyOpen={setLlmApiKeyOpen}
+                          llmApiKeyInputRef={llmApiKeyInputRef}
+                          llmProviderKeys={llmProviderKeys}
+                          llmProviderKeysLoading={llmProviderKeysLoading}
+                          llmProviderKeysError={llmProviderKeysError}
+                          setActiveLlmProviderKey={setActiveLlmProviderKey}
+                          deleteLlmProviderKey={deleteLlmProviderKey}
+                          saveLlmSettings={saveLlmSettings}
+                          removeLlmApiKey={removeLlmApiKey}
+                          llmHasStoredApiKey={llmHasStoredApiKey}
+                          llmHasEnvApiKey={llmHasEnvApiKey}
+                          providerStatusList={providerStatusList}
+                          providerStatusLoading={providerStatusLoading}
+                          providerStatusError={providerStatusError}
+                          loadProviderStatus={loadProviderStatus}
+                        />
                       ) : null}
 
                       {settingsTab === 'security' ? (
-                        <div style={styles.settingsSection}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-                            <div style={styles.settingsSectionTitle}>{t('agent_security')}</div>
-                            <button
-                              style={{
-                                ...styles.smallIconButton,
-                                width: '26px',
-                                height: '26px',
-                                borderRadius: '8px',
-                                fontFamily: 'var(--mono)',
-                                fontSize: '14px',
-                                fontWeight: 700,
-                                background: 'rgba(245,166,35,0.12)',
-                                border: '1px solid rgba(245,166,35,0.35)',
-                                color: 'var(--amber)'
-                              }}
-                              title={t('sandbox_help_tooltip')}
-                              onClick={() => setGenericModal({
-                                title: t('sandbox_help_title'),
-                                body: [
-                                  t('sandbox_help_line_1'),
-                                  '',
-                                  t('sandbox_help_body_off_title'),
-                                  `- ${t('sandbox_help_off_1')}`,
-                                  `- ${t('sandbox_help_off_2')}`,
-                                  `- ${t('sandbox_help_off_3')}`,
-                                  `- ${t('sandbox_help_off_4')}`,
-                                  '',
-                                  t('sandbox_help_body_on_title'),
-                                  `- ${t('sandbox_help_on_1')}`,
-                                  `- ${t('sandbox_help_on_2')}`,
-                                  `- ${t('sandbox_help_on_3')}`,
-                                  '',
-                                  t('sandbox_help_privacy_title'),
-                                  `- ${t('sandbox_help_privacy_1')}`,
-                                  `- ${t('sandbox_help_privacy_2')}`,
-                                ].join('\n')
-                              })}
-                            >
-                              ?
-                            </button>
-                          </div>
-                          <div style={styles.settingsHint}>{t('security_caps_warning')}</div>
-                          <div style={styles.settingsGrid}>
-                          <div style={styles.settingsField}>
-                            <div style={{ ...styles.settingsLabel, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span>{t('sandbox_mode')}</span>
-                              <button
-                                style={{
-                                  ...styles.smallIconButton,
-                                  width: '22px',
-                                  height: '22px',
-                                  borderRadius: '7px',
-                                  fontFamily: 'var(--mono)',
-                                  fontSize: '13px',
-                                  fontWeight: 700,
-                                  background: 'rgba(245,166,35,0.12)',
-                                  border: '1px solid rgba(245,166,35,0.35)',
-                                  color: 'var(--amber)'
-                                }}
-                                title={t('sandbox_help_tooltip')}
-                                onClick={() => setGenericModal({
-                                  title: t('sandbox_help_title'),
-                                  body: [
-                                    t('sandbox_help_line_1'),
-                                    '',
-                                    t('sandbox_help_body_off_title'),
-                                    `- ${t('sandbox_help_off_1')}`,
-                                    `- ${t('sandbox_help_off_2')}`,
-                                    `- ${t('sandbox_help_off_3')}`,
-                                    `- ${t('sandbox_help_off_4')}`,
-                                    '',
-                                    t('sandbox_help_body_on_title'),
-                                    `- ${t('sandbox_help_on_1')}`,
-                                    `- ${t('sandbox_help_on_2')}`,
-                                    `- ${t('sandbox_help_on_3')}`,
-                                    '',
-                                    t('sandbox_help_privacy_title'),
-                                    `- ${t('sandbox_help_privacy_1')}`,
-                                    `- ${t('sandbox_help_privacy_2')}`,
-                                  ].join('\n')
-                                })}
-                              >
-                                ?
-                              </button>
-                            </div>
-                            <select
-                              style={styles.settingsInput}
-                              value={securitySettings?.sandbox ? 'on' : 'off'}
-                              onChange={(e) => {
-                                const next = e.target.value === 'on';
-                                applySecuritySettingChange({ sandbox: next }, { needsConfirm: next });
-                              }}
-                              disabled={settingsLoading}
-                            >
-                              <option value="off">{t('off')}</option>
-                              <option value="on">{t('on')}</option>
-                            </select>
-                          </div>
-
-                          {[
-                            { key: 'allow_os_commands', label: t('allow_os_commands') },
-                            { key: 'allow_file_write', label: t('allow_file_write') },
-                            { key: 'allow_web_retrieval', label: t('allow_web_retrieval') },
-                            { key: 'allow_connectors', label: t('allow_connectors') },
-                            { key: 'allow_system_profile', label: t('allow_system_profile') }
-                          ].map((row) => {
-                            const isDisabled = Boolean(securitySettings?.sandbox) && row.key !== 'allow_system_profile';
-                            const value = Boolean(securitySettings?.[row.key]) ? 'on' : 'off';
-                            return (
-                              <div key={row.key} style={styles.settingsField}>
-                                <div style={styles.settingsLabel}>{row.label}</div>
-                                <select
-                                  style={styles.settingsInput}
-                                  value={value}
-                                  onChange={(e) => {
-                                    const v = e.target.value === 'on';
-                                    const needsConfirm = row.key === 'allow_file_write' && !v;
-                                    applySecuritySettingChange({ [row.key]: v }, { needsConfirm });
-                                  }}
-                                  disabled={settingsLoading || isDisabled}
-                                >
-                                  <option value="off">{t('off')}</option>
-                                  <option value="on">{t('on')}</option>
-                                </select>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        <div style={styles.settingsHint}>
-                          {t('last_updated')}: {securitySettingsUpdatedAt || '—'}
-                        </div>
-                        </div>
+                        <SecuritySettingsPanel
+                          styles={styles}
+                          t={t}
+                          lang={lang}
+                          settingsLoading={settingsLoading}
+                          securitySettings={securitySettings}
+                          securitySettingsUpdatedAt={securitySettingsUpdatedAt}
+                          applySecuritySettingChange={applySecuritySettingChange}
+                          setGenericModal={setGenericModal}
+                          autoApproveCommands={autoApproveCommands}
+                          autoApproveCommandsLoading={autoApproveCommandsLoading}
+                          autoApproveCommandsError={autoApproveCommandsError}
+                          loadAutoApproveCommands={loadAutoApproveCommands}
+                          deleteAutoApproveCommand={deleteAutoApproveCommand}
+                        />
                       ) : null}
 
                       {settingsTab === 'connectors' ? (
                         <>
                           <div style={styles.settingsSection}>
                             <div style={styles.settingsSectionTitle}>{t('connectors') || 'Conectores'}</div>
+                            <div style={{ marginTop: '6px', marginBottom: '8px', fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)', lineHeight: 1.5 }}>
+                              {t('connectors_oauth_hint')}
+                            </div>
                             {connectorsLoading ? (
                               <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
                                 {t('loading')}
@@ -7499,6 +6009,105 @@ const App = () => {
                       {settingsTab === 'memory' ? (
                         <>
                           <div style={styles.settingsSection}>
+                            <div style={styles.settingsSectionTitle}>{lang === 'pt' ? 'Memória (Dream)' : 'Memory (Dream)'}</div>
+                            <div style={styles.settingsHint}>
+                              {lang === 'pt'
+                                ? 'O Dream consolida memórias derivadas (snapshot) e faz higiene (decay/prune). O histórico RAW (SQL) não é apagado.'
+                                : 'Dream consolidates derived memories (snapshot) and performs hygiene (decay/prune). RAW history (SQL) is never deleted.'}
+                            </div>
+                            <div style={styles.settingsActions}>
+                              <button
+                                style={styles.settingsPrimaryButton}
+                                onClick={runMemoryDream}
+                                disabled={settingsLoading || memoryDreamLoading}
+                              >
+                                {memoryDreamLoading ? (lang === 'pt' ? 'Executando…' : 'Running…') : (lang === 'pt' ? 'Rodar Dream' : 'Run Dream')}
+                              </button>
+                            </div>
+                            {(memoryDreamSnapshot || memoryDreamDecayed || memoryDreamPruned) ? (
+                              <div style={{ marginTop: '10px' }}>
+                                <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+                                  {lang === 'pt'
+                                    ? `decayed=${memoryDreamDecayed} • pruned=${memoryDreamPruned}`
+                                    : `decayed=${memoryDreamDecayed} • pruned=${memoryDreamPruned}`}
+                                </div>
+                                <textarea
+                                  style={{ ...styles.settingsTextarea, minHeight: '140px', marginTop: '8px' }}
+                                  value={memoryDreamSnapshot}
+                                  readOnly
+                                  placeholder={lang === 'pt' ? 'Snapshot vazio.' : 'Empty snapshot.'}
+                                />
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div style={styles.settingsSection}>
+                            <div style={styles.settingsSectionTitle}>{lang === 'pt' ? 'Pesquisar memória RAW' : 'Search RAW memory'}</div>
+                            <div style={styles.settingsHint}>
+                              {lang === 'pt'
+                                ? 'Pesquisa no histórico bruto em SQL (mensagens). Não altera nem apaga o RAW.'
+                                : 'Searches the raw SQL history (messages). Does not alter or delete RAW.'}
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
+                              <input
+                                style={{ ...styles.settingsInput, flex: 1, minWidth: '240px' }}
+                                value={rawMemoryQuery}
+                                onChange={(e) => setRawMemoryQuery(e.target.value)}
+                                placeholder={lang === 'pt' ? 'Ex.: kickoff, orçamento, nome do projeto…' : 'E.g., kickoff, budget, project name…'}
+                                disabled={rawMemoryLoading}
+                              />
+                              <button
+                                style={styles.settingsSecondaryButton}
+                                onClick={searchRawMemory}
+                                disabled={rawMemoryLoading || !String(rawMemoryQuery || '').trim()}
+                              >
+                                {rawMemoryLoading ? t('loading') : t('search')}
+                              </button>
+                            </div>
+                            {rawMemoryError ? (
+                              <div style={{ ...styles.settingsError, marginTop: '8px' }}>{rawMemoryError}</div>
+                            ) : null}
+                            {(rawMemoryResults || []).length ? (
+                              <div style={{ display: 'grid', gap: '8px', marginTop: '10px' }}>
+                                {rawMemoryResults.slice(0, 25).map((r) => {
+                                  const cid = r?.conversation_id;
+                                  const sid = r?.session_id;
+                                  const ckind = String(r?.conversation_kind || '').trim().toLowerCase();
+                                  const kindOverride = ckind === 'task' ? 'task' : 'conversation';
+                                  return (
+                                    <div
+                                      key={`${r?.message_id || ''}-${r?.conversation_id || ''}`}
+                                      style={{ ...styles.lightCard, padding: '10px 12px' }}
+                                    >
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                          <div style={{ fontSize: '13px', color: 'var(--text)', fontFamily: 'var(--sans)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {r?.conversation_title || `#${cid}`}
+                                          </div>
+                                          <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+                                            {formatCompactDateTime(r?.message_created_at || '')}
+                                          </div>
+                                          <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--sans)' }}>
+                                            {r?.snippet || ''}
+                                          </div>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                          <button
+                                            style={styles.settingsSecondaryButton}
+                                            onClick={() => loadConversation(cid, sid, kindOverride)}
+                                          >
+                                            {lang === 'pt' ? 'Abrir' : 'Open'}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div style={styles.settingsSection}>
                             <div style={styles.settingsSectionTitle}>{t('system_profile_local')}</div>
                             <div style={styles.settingsHint}>
                               {t('system_profile_hint_1')}
@@ -7543,6 +6152,158 @@ const App = () => {
                               value={systemProfileMarkdown}
                               readOnly
                             />
+                          </div>
+
+                          <div style={styles.settingsSection}>
+                            <div style={styles.settingsSectionTitle}>{lang === 'pt' ? 'Importar dados de memória externos' : 'Import external memory data'}</div>
+                            <div style={styles.settingsHint}>
+                              {lang === 'pt'
+                                ? 'Use o prompt abaixo no seu outro provedor de IA para gerar um resumo em Markdown. Depois, envie o arquivo .md aqui para importar como memória com a origem “imported”.'
+                                : 'Use the prompt below in your other AI provider to generate a Markdown summary. Then upload the .md file here to import it as memory with “imported” provenance.'}
+                            </div>
+                            <textarea
+                              style={{ ...styles.settingsTextarea, minHeight: '180px', marginTop: '8px' }}
+                              value={
+                                `Importar dados de memória para o Open Slap\n\n## Copie este comando e cole em uma conversa com seu outro provedor de IA\n\nVocê está me ajudando a importar o contexto de um assistente de IA para outro. Seu trabalho é analisar nossas conversas anteriores e resumir o que você sabe sobre mim.\n\nNa resposta, evite usar pronomes na primeira pessoa (eu, meu, minha, me) e na segunda pessoa (você, seu, sua). Em vez disso, use \"o usuário\" ou outro termo neutro para se referir ao indivíduo com essas características.\n\nPreserve as palavras do usuário ao pé da letra sempre que possível, especialmente para instruções e preferências.\n\nCategorias (resposta nesta ordem):\n\n1. Informações demográficas: como gosto que me chamem, profissão, formação acadêmica e local onde moro.\n\n2. Interesses e preferências: coisas com que me envolvo de modo ativo e contínuo, não apenas um objeto que eu tenho ou uma compra que fiz uma vez.\n\n3. Relacionamentos: relacionamentos confirmados e de longo prazo.\n\n4. Eventos, projetos e planos: um registro de atividades recentes e significativas.\n\n5. Instruções: regras que pedi explicitamente para você seguir, como \"sempre faça X\", \"nunca faça Y\" e correções no seu comportamento. Inclua apenas regras de dados de memória armazenados, não de conversas.\n\nFormato:\n\nDivida o conteúdo em seções rotuladas usando as categorias acima. Tente incluir citações de comandos meus que justifiquem cada resposta. Estruture cada item usando este formato:\n\nO nome do usuário é <name>.\n\n– Evidência: o usuário disse \"me chame de <name>\". Data: [YYYY-MM-DD].\n\nSaída:\n\n– Formate o resumo da resposta final como um bloco de texto md.`
+                              }
+                              readOnly
+                            />
+                            <div style={{ display: 'grid', gap: '8px', marginTop: '8px' }}>
+                              <div style={styles.settingsField}>
+                                <div style={styles.settingsLabel}>{lang === 'pt' ? 'Provedor/Origem (opcional)' : 'Provider/Source (optional)'}</div>
+                                <input
+                                  style={styles.settingsInput}
+                                  value={externalMemoryProvider}
+                                  onChange={(e) => setExternalMemoryProvider(e.target.value)}
+                                  placeholder={lang === 'pt' ? 'ex.: claude, chatgpt' : 'e.g., claude, chatgpt'}
+                                  disabled={settingsLoading || externalMemoryUploading}
+                                />
+                              </div>
+                              <input
+                                type="file"
+                                accept=".md"
+                                style={{ ...styles.settingsInput, paddingTop: '8px', paddingBottom: '8px' }}
+                                disabled={settingsLoading || externalMemoryUploading}
+                                onChange={async (e) => {
+                                  const file = e.target.files && e.target.files[0];
+                                  e.target.value = '';
+                                  if (!file) return;
+                                  try {
+                                    setExternalMemoryUploading(true);
+                                    const md = await new Promise((resolve, reject) => {
+                                      const r = new FileReader();
+                                      r.onerror = () => reject(new Error('Failed to read file.'));
+                                      r.onload = () => resolve(String(r.result || ''));
+                                      r.readAsText(file);
+                                    });
+                                    const headers = getAuthHeaders();
+                                    if (!headers.Authorization) return;
+                                    headers['Content-Type'] = 'application/json';
+                                    const res = await fetch('/api/memory/import', {
+                                      method: 'POST',
+                                      headers,
+                                      body: JSON.stringify({
+                                        markdown: String(md || ''),
+                                        provider: String(externalMemoryProvider || ''),
+                                        label: String(file?.name || ''),
+                                        split_by_category: true
+                                      })
+                                    });
+                                    const json = await res.json().catch(() => ({}));
+                                    if (!res.ok) {
+                                      throw new Error(json?.detail || 'Failed to import memory.');
+                                    }
+                                    loadExternalMemoryImports({ silent: true });
+                                    setGenericModal({
+                                      title: lang === 'pt' ? 'Importado' : 'Imported',
+                                      body: lang === 'pt'
+                                        ? 'Memória importada. A seção “Instruções” foi fixada automaticamente.'
+                                        : 'Memory imported and recorded with “imported” provenance.'
+                                    });
+                                  } catch (e) {
+                                    setGenericModal({
+                                      title: t('error'),
+                                      body: e?.message || 'Failed to import memory.'
+                                    });
+                                  } finally {
+                                    setExternalMemoryUploading(false);
+                                  }
+                                }}
+                              />
+                            </div>
+                            <div style={{ marginTop: '10px' }}>
+                              <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+                                {lang === 'pt' ? 'Importações recentes' : 'Recent imports'}
+                              </div>
+                              {externalMemoryImportsError ? (
+                                <div style={{ ...styles.settingsError, marginTop: '8px' }}>{externalMemoryImportsError}</div>
+                              ) : null}
+                              {externalMemoryImportsLoading ? (
+                                <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+                                  {t('loading')}
+                                </div>
+                              ) : (
+                                <div style={{ display: 'grid', gap: '8px', marginTop: '10px' }}>
+                                  {(externalMemoryImports || []).length ? (
+                                    (externalMemoryImports || []).slice(0, 12).map((imp) => {
+                                      const importId = String(imp?.import_id || '').trim();
+                                      const provider = String(imp?.provider || '').trim();
+                                      const createdAt = String(imp?.created_at || '').trim();
+                                      const firstContent = String(imp?.items?.[0]?.content || '');
+                                      const labelMatch = firstContent.match(/label:\s*([^,)]+)/i);
+                                      const label = String(labelMatch?.[1] || '').trim();
+                                      const pinned = Boolean(imp?.pinned);
+                                      const count = Number(imp?.count || 0) || (imp?.items?.length || 0);
+                                      return (
+                                        <div key={importId || createdAt} style={{ ...styles.lightCard, padding: '10px 12px' }}>
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                              <div style={{ fontSize: '13px', color: 'var(--text)', fontFamily: 'var(--sans)', fontWeight: 600, wordBreak: 'break-word' }}>
+                                                {label || (lang === 'pt' ? 'Importação de memória' : 'Memory import')}
+                                              </div>
+                                              <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+                                                {(provider ? `provider=${provider} • ` : '')}{count ? `${count} ${lang === 'pt' ? 'seções' : 'sections'} • ` : ''}{formatCompactDateTime(createdAt)}
+                                                {pinned ? ` • ${lang === 'pt' ? 'fixado' : 'pinned'}` : ''}
+                                              </div>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                              <button
+                                                style={styles.settingsSecondaryButton}
+                                                onClick={() => setExternalMemoryImportPinned(importId, !pinned)}
+                                                disabled={externalMemoryUploading || !importId}
+                                              >
+                                                {pinned ? (lang === 'pt' ? 'Desfixar' : 'Unpin') : (lang === 'pt' ? 'Fixar' : 'Pin')}
+                                              </button>
+                                              <button
+                                                style={styles.settingsSecondaryButton}
+                                                onClick={() => {
+                                                  setGenericModal({
+                                                    title: lang === 'pt' ? 'Remover importação' : 'Remove import',
+                                                    body: lang === 'pt'
+                                                      ? 'Remover esta importação de memória? Isto apaga os eventos importados.'
+                                                      : 'Remove this memory import? This deletes the imported events.',
+                                                    onConfirm: async () => {
+                                                      await deleteExternalMemoryImport(importId);
+                                                    }
+                                                  });
+                                                }}
+                                                disabled={externalMemoryUploading || !importId}
+                                              >
+                                                {lang === 'pt' ? 'Remover' : 'Remove'}
+                                              </button>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })
+                                  ) : (
+                                    <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+                                      {lang === 'pt' ? 'Nenhuma importação ainda.' : 'No imports yet.'}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </div>
 
                           <div style={styles.settingsSection}>
@@ -8373,103 +7134,7 @@ const App = () => {
                           </div>
                         ) : null}
                         {!currentConversation && !chatSearch.trim() && messages.length === 0 && !streaming ? (
-                          <div style={{ maxWidth: '920px', width: '100%', margin: '0 auto' }}>
-                            <div style={{ ...styles.lightCard, border: '1px solid rgba(255,255,255,0.10)' }}>
-                              <pre
-                                style={{
-                                  fontFamily: OPEN_SLAP_ASCII_FONT,
-                                    fontSize: isMobile ? '10px' : '12px',
-                                  lineHeight: 1.35,
-                                  whiteSpace: 'pre',
-                                  fontVariantLigatures: 'none',
-                                  letterSpacing: '0',
-                                  color: 'var(--text)',
-                                  opacity: 0.95,
-                                  overflowX: 'auto',
-                                  maxWidth: '100%',
-                                    width: '100%',
-                                  margin: 0
-                                }}
-                              >
-                                {OPEN_SLAP_ASCII}
-                              </pre>
-                              <div style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text)', fontFamily: 'var(--sans)' }}>
-                                Open Slap! é um core agêntico open source e gratuito para organizar tarefas, planejar projetos e executar fluxos com múltiplos agentes.
-                              </div>
-                              <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
-                                Exemplos práticos (clique para preencher):
-                              </div>
-                              <div style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                                <button
-                                  style={styles.settingsSecondaryButton}
-                                  onClick={() => startNewConversationWithPrompt('Quero que você organize minhas tarefas pendentes. Vou listar agora e você transforma em um TODO com prioridades.')}
-                                >
-                                  Assistente pessoal (tarefas)
-                                </button>
-                                <button
-                                  style={styles.settingsSecondaryButton}
-                                  onClick={() => startNewConversationWithPrompt(buildAgentsHelpPrompt())}
-                                >
-                                  Ver agentes disponíveis
-                                </button>
-                                <button
-                                  style={styles.settingsSecondaryButton}
-                                  onClick={() => startNewConversationWithPrompt(buildHelpHowItWorksPrompt())}
-                                >
-                                  Como o sistema funciona
-                                </button>
-                                <button
-                                  style={styles.settingsSecondaryButton}
-                                  onClick={() => startNewConversationWithPrompt(buildHelpSettingsPrompt())}
-                                >
-                                  Configurar o sistema (Settings)
-                                </button>
-                                <button
-                                  style={styles.settingsSecondaryButton}
-                                  onClick={() => startNewConversationWithPrompt(buildHelpProjectsPrompt())}
-                                >
-                                  Criar projetos no sistema
-                                </button>
-                                <button
-                                  style={styles.settingsSecondaryButton}
-                                  onClick={() => startNewConversationWithPrompt(buildHelpFAQPrompt())}
-                                >
-                                  Dúvidas gerais (FAQ)
-                                </button>
-                                <button
-                                  style={{ ...styles.settingsSecondaryButton, background: '#fff', color: '#000', border: '1px solid rgba(0,0,0,0.15)' }}
-                                  onClick={() => window.open('https://aistudio.google.com/app/apikey', '_blank')}
-                                >
-                                  Obter chave Gemini
-                                </button>
-                                <button
-                                  style={{ ...styles.settingsSecondaryButton, background: '#fff', color: '#000', border: '1px solid rgba(0,0,0,0.15)' }}
-                                  onClick={() => window.open('https://console.groq.com/keys', '_blank')}
-                                >
-                                  Obter chave Groq
-                                </button>
-                              </div>
-                              <div style={{ marginTop: '12px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                <button
-                                  style={styles.settingsPrimaryButton}
-                                  onClick={() => startNewConversationWithPrompt('Quero começar. Me faça perguntas rápidas e organize o que for necessário.')}
-                                >
-                                  {t('new_conversation')}
-                                </button>
-                                <button
-                                  style={{
-                                    ...styles.settingsSecondaryButton,
-                                    background: '#ffffff',
-                                    color: '#000000',
-                                    border: '1px solid rgba(0,0,0,0.15)'
-                                  }}
-                                  onClick={() => window.open(OPEN_SLAP_REPO_URL, '_blank')}
-                                >
-                                  GitHub — conheça o projeto
-                                </button>
-                              </div>
-                            </div>
-                          </div>
+                          renderBootScreen()
                         ) : null}
                         {(chatSearch.trim()
                           ? messages.filter((m) => (m.content || '').toLowerCase().includes(chatSearch.trim().toLowerCase()))
@@ -8526,6 +7191,10 @@ const App = () => {
                                               <MessageBlock
                                                 key={`${b.type || 'text'}-${idx}`}
                                                 block={b}
+                                                planUi={{
+                                                  approved: Boolean(approvedPlanLocalMsgIds[message.id]),
+                                                  running: (orchStatus === 'running' && message.id === activePlanLocalMsgId && Number(currentConversation) === Number(activePlanConvId))
+                                                }}
                                                 onApprovePlan={(tasks) => {
                                                   if (!currentConversation) return;
                                                   const passed = Array.isArray(tasks) ? tasks : [];
@@ -8537,6 +7206,7 @@ const App = () => {
                                                   setActivePlanLocalMsgId(message.id || null);
                                                   approvePlan(currentConversation, tlist).then((ok) => {
                                                     if (!ok) return;
+                                                    setApprovedPlanLocalMsgIds(prev => ({ ...prev, [message.id]: true }));
                                                     const hasExecutable = tlist.some(t => String(t?.skill_id || '').trim());
                                                     if (hasExecutable && orchStatus !== 'running') startOrchestration(currentConversation);
                                                   }).catch(() => {});
@@ -8656,6 +7326,24 @@ const App = () => {
                                     )}
                                   </div>
                                 )}
+                                {message.role === 'assistant' && !message.streaming ? (
+                                  <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
+                                    <button
+                                      style={{
+                                        ...styles.settingsSecondaryButton,
+                                        padding: '6px 10px',
+                                        fontSize: '11px',
+                                        opacity: savedInfoLocalMsgIds[message.id] ? 0.8 : 1
+                                      }}
+                                      onClick={() => saveAssistantInfo(message)}
+                                      disabled={Boolean(savedInfoLocalMsgIds[message.id])}
+                                    >
+                                      {savedInfoLocalMsgIds[message.id]
+                                        ? (lang === 'pt' ? 'Salvo' : 'Saved')
+                                        : (lang === 'pt' ? 'Salvar informações' : 'Save info')}
+                                    </button>
+                                  </div>
+                                ) : null}
                               </div>
                               {(centerView === 'chat'
                                 && planTasks.length > 0

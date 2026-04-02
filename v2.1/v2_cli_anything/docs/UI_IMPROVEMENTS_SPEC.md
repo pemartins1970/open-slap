@@ -1,5 +1,5 @@
 # Open Slap! — Especificação de Melhorias de Interface
-**Para:** Trae  
+**Para:** contribuidores / manutenção do projeto  
 **Contexto:** Baseado em análise direta do código `App_auth.jsx`, `main_auth.py` e `db.py` do zip atual.  
 **Prioridade:** Settings → Chat → Tarefas (menor para maior esforço)
 
@@ -158,7 +158,7 @@ Adicionar logo após o campo de API key, um card com status de cada provider. Os
 </div>
 ```
 
-> **Nota Trae:** verificar se `llmStatus.providers` já retorna essa lista ou se precisa chamar `/api/llm/status` separadamente. A lógica de fetch já existe em `loadLlmSettings`.
+> Nota: verificar se `llmStatus.providers` já retorna essa lista ou se precisa chamar `/api/llm/status` separadamente. A lógica de fetch já existe em `loadLlmSettings`.
 
 ---
 

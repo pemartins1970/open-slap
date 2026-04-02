@@ -1,0 +1,41 @@
+```text
++-------------------------------------------------------------------+
+|                      CAMADA DE INTERFACE (FRONTEND)               |
++-------------------------------------------------------------------+
+| [Usuário / Chat] <-----------------------------------------------> [Browser Widget / Canvas] |
+|                                                                   |  ^                           |
+|                                                                   |  | (Live Stream: Frames/Events)|
+|                                                                   |  v                           |
+|                                                                   | [Modal de Intervenção Humana] |
++-------------------------------------------------------------------+
+                                  ^
+                                  |
+                                  | (Comandos de Intervenção)
+                                  v
++-------------------------------------------------------------------+
+|                  ORQUESTRAÇÃO E SEGURANÇA (BACKEND)               |
++-------------------------------------------------------------------+
+| [Orquestrador de Tarefas] <--------------------------------------> [WebSocket Server] |
+|  ^         ^                                                      |  ^                 |
+|  | (Objetivo)|                                                      |  | (Proxy Input)     |
+|  v         v                                                      |  v                 |
+| [Planner LLM (Trusted Context)] <--------------------------------> [Policy Engine / Guardrails] |
+|  ^                                                                |  ^                 |
+|  | (Dados Estruturados)                                           |  | (Validação)       |
+|  v                                                                |  v                 |
+| [Extractor LLM (Untrusted DOM)] <--------------------------------> [Secure Vault (Credenciais Efêmeras)] |
++-------------------------------------------------------------------+
+                                  ^
+                                  |
+                                  | (Comando de Ação / URL / DOM Bruto)
+                                  v
++-------------------------------------------------------------------+
+|                 INFRAESTRUTURA DE EXECUÇÃO (WORKER)               |
++-------------------------------------------------------------------+
+| [Browser Worker (Docker/Isolated)] <-----------------------------> [Playwright / CDP Controller] |
+|  ^                                                                |  ^                           |
+|  | (Screenshots)                                                  |  | (Interação)                 |
+|  v                                                                |  v                           |
+| [Snapshot Streamer (JPEG/WebP)]                                   |                              |
++-------------------------------------------------------------------+
+```

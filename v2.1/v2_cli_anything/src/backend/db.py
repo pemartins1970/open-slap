@@ -68,7 +68,7 @@ class DatabaseManager:
         """Garante que as tabelas existem"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             # Tabela de conversas
             conn.execute(
                 """
@@ -172,6 +172,12 @@ class DatabaseManager:
                     conversation_id INTEGER NOT NULL,
                     text TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'done')),
+                    kind TEXT DEFAULT 'step',
+                    actor TEXT DEFAULT 'human',
+                    origin TEXT DEFAULT 'user',
+                    scope TEXT DEFAULT 'project',
+                    priority TEXT DEFAULT 'medium',
+                    due_at TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     source_conversation_id INTEGER,
@@ -186,6 +192,18 @@ class DatabaseManager:
                     (r[1] if isinstance(r, (list, tuple)) else None)
                     for r in conn.execute("PRAGMA table_info(task_todos)").fetchall()
                 ]
+                if "kind" not in cols:
+                    conn.execute("ALTER TABLE task_todos ADD COLUMN kind TEXT DEFAULT 'step'")
+                if "actor" not in cols:
+                    conn.execute("ALTER TABLE task_todos ADD COLUMN actor TEXT DEFAULT 'human'")
+                if "origin" not in cols:
+                    conn.execute("ALTER TABLE task_todos ADD COLUMN origin TEXT DEFAULT 'user'")
+                if "scope" not in cols:
+                    conn.execute("ALTER TABLE task_todos ADD COLUMN scope TEXT DEFAULT 'project'")
+                if "priority" not in cols:
+                    conn.execute("ALTER TABLE task_todos ADD COLUMN priority TEXT DEFAULT 'medium'")
+                if "due_at" not in cols:
+                    conn.execute("ALTER TABLE task_todos ADD COLUMN due_at TEXT")
                 if "parent_todo_id" not in cols:
                     conn.execute(
                         "ALTER TABLE task_todos ADD COLUMN parent_todo_id INTEGER"
@@ -210,6 +228,15 @@ class DatabaseManager:
                 pass
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_task_todos_user_status ON task_todos(user_id, status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_task_todos_user_scope_status ON task_todos(user_id, scope, status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_task_todos_user_actor_status ON task_todos(user_id, actor, status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_task_todos_user_kind ON task_todos(user_id, kind)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_task_todos_conversation ON task_todos(conversation_id)"
@@ -309,6 +336,21 @@ class DatabaseManager:
 
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS user_command_autoapprove (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    command_norm TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (id)
+                )
+            """
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_command_autoapprove_user_cmd ON user_command_autoapprove(user_id, command_norm)"
+            )
+
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS user_api_secrets (
                     user_id INTEGER PRIMARY KEY,
                     api_key_ciphertext TEXT NOT NULL,
@@ -320,10 +362,42 @@ class DatabaseManager:
 
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS user_llm_provider_keys (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    provider TEXT NOT NULL,
+                    api_key_ciphertext TEXT NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (id)
+                )
+            """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_llm_provider_keys_user_provider ON user_llm_provider_keys(user_id, provider)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_llm_provider_keys_user_provider_active ON user_llm_provider_keys(user_id, provider, is_active)"
+            )
+
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS user_system_profile (
                     user_id INTEGER PRIMARY KEY,
                     profile_md TEXT NOT NULL,
                     profile_json TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (id)
+                )
+            """
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_onboarding (
+                    user_id INTEGER PRIMARY KEY,
+                    completed INTEGER NOT NULL DEFAULT 0,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users (id)
                 )
@@ -593,6 +667,27 @@ class DatabaseManager:
                 "CREATE INDEX IF NOT EXISTS idx_cli_logs_conversation ON cli_command_logs(conversation_id)"
             )
 
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS conversation_cli_summaries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    conversation_id INTEGER NOT NULL,
+                    execution_id TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (id),
+                    FOREIGN KEY (conversation_id) REFERENCES conversations (id)
+                )
+            """
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_cli_summaries_user_exec ON conversation_cli_summaries(user_id, execution_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cli_summaries_conversation ON conversation_cli_summaries(conversation_id)"
+            )
+
             try:
                 conn.execute(
                     """
@@ -671,6 +766,22 @@ class DatabaseManager:
 
             conn.commit()
 
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+        except Exception:
+            pass
+        try:
+            conn.execute("PRAGMA busy_timeout=30000")
+        except Exception:
+            pass
+        return conn
+
     def create_conversation(
         self,
         user_id: int,
@@ -741,6 +852,19 @@ class DatabaseManager:
 
             return [dict(msg) for msg in messages]
 
+    def get_message(self, message_id: int) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT id, role, content, expert_id, provider, model, tokens, created_at
+                FROM messages
+                WHERE id = ?
+            """,
+                (int(message_id),),
+            ).fetchone()
+            return dict(row) if row else None
+
     def save_message(
         self,
         conversation_id: int,
@@ -752,7 +876,7 @@ class DatabaseManager:
         tokens: Optional[int] = None,
     ) -> int:
         """Salva mensagem"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             safe_content = _redact_text(content) or ""
             cursor = conn.execute(
                 """
@@ -849,6 +973,7 @@ class DatabaseManager:
                   f.conversation_id as conversation_id,
                   c.title as conversation_title,
                   c.session_id as session_id,
+                  c.kind as conversation_kind,
                   c.created_at as conversation_created_at,
                   c.updated_at as conversation_updated_at,
                   (SELECT created_at FROM messages WHERE id = f.message_id) as message_created_at,
@@ -868,12 +993,24 @@ class DatabaseManager:
         user_id: int,
         conversation_id: int,
         text: str,
+        kind: Optional[str] = None,
+        actor: Optional[str] = None,
+        origin: Optional[str] = None,
+        scope: Optional[str] = None,
+        priority: Optional[str] = None,
+        due_at: Optional[str] = None,
         parent_todo_id: Optional[int] = None,
         delivery_path: Optional[str] = None,
         artifact_meta: Optional[Any] = None,
         source_conversation_id: Optional[int] = None,
         source_message_id: Optional[int] = None,
     ) -> int:
+        kind_v = str(kind or "step").strip().lower() or "step"
+        actor_v = str(actor or "human").strip().lower() or "human"
+        origin_v = str(origin or "user").strip().lower() or "user"
+        scope_v = str(scope or "project").strip().lower() or "project"
+        priority_v = str(priority or "medium").strip().lower() or "medium"
+        due_at_v = str(due_at).strip() if due_at else None
         artifact_meta_json = None
         if artifact_meta is not None:
             try:
@@ -885,15 +1022,22 @@ class DatabaseManager:
                 """
                 INSERT INTO task_todos (
                   user_id, conversation_id, text,
+                  kind, actor, origin, scope, priority, due_at,
                   parent_todo_id, delivery_path, artifact_meta,
                   source_conversation_id, source_message_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     user_id,
                     conversation_id,
                     _redact_text(text) or "",
+                    kind_v,
+                    actor_v,
+                    origin_v,
+                    scope_v,
+                    priority_v,
+                    due_at_v,
                     int(parent_todo_id) if parent_todo_id is not None else None,
                     (str(delivery_path).strip() if delivery_path else None),
                     artifact_meta_json,
@@ -923,7 +1067,7 @@ class DatabaseManager:
             rows = conn.execute(
                 f"""
                 SELECT
-                  id, conversation_id, text, status, created_at, updated_at,
+                  id, conversation_id, text, status, kind, actor, origin, scope, priority, due_at, created_at, updated_at,
                   parent_todo_id, delivery_path, artifact_meta,
                   source_conversation_id, source_message_id
                 FROM task_todos
@@ -956,6 +1100,12 @@ class DatabaseManager:
                   t.conversation_id,
                   t.text,
                   t.status,
+                  t.kind,
+                  t.actor,
+                  t.origin,
+                  t.scope,
+                  t.priority,
+                  t.due_at,
                   t.created_at,
                   t.updated_at,
                   t.parent_todo_id,
@@ -999,6 +1149,12 @@ class DatabaseManager:
         todo_id: int,
         text: Optional[str] = None,
         status: Optional[str] = None,
+        kind: Optional[str] = None,
+        actor: Optional[str] = None,
+        origin: Optional[str] = None,
+        scope: Optional[str] = None,
+        priority: Optional[str] = None,
+        due_at: Optional[str] = None,
         parent_todo_id: Optional[int] = None,
         delivery_path: Optional[str] = None,
         artifact_meta: Optional[Any] = None,
@@ -1013,6 +1169,24 @@ class DatabaseManager:
         if status is not None:
             sets.append("status = ?")
             args.append(status)
+        if kind is not None:
+            sets.append("kind = ?")
+            args.append(str(kind).strip().lower())
+        if actor is not None:
+            sets.append("actor = ?")
+            args.append(str(actor).strip().lower())
+        if origin is not None:
+            sets.append("origin = ?")
+            args.append(str(origin).strip().lower())
+        if scope is not None:
+            sets.append("scope = ?")
+            args.append(str(scope).strip().lower())
+        if priority is not None:
+            sets.append("priority = ?")
+            args.append(str(priority).strip().lower())
+        if due_at is not None:
+            sets.append("due_at = ?")
+            args.append((str(due_at).strip() if due_at else None))
         if parent_todo_id is not None:
             sets.append("parent_todo_id = ?")
             args.append(int(parent_todo_id))
@@ -1158,6 +1332,187 @@ class DatabaseManager:
                   updated_at=CURRENT_TIMESTAMP
                 """,
                 (int(user_id), str(api_key_ciphertext)),
+            )
+            conn.commit()
+
+    def add_user_llm_provider_key_ciphertext(
+        self, user_id: int, provider: str, api_key_ciphertext: str, set_active: bool = True
+    ) -> int:
+        prov = str(provider or "").strip().lower()
+        if not prov:
+            raise ValueError("provider required")
+        with sqlite3.connect(self.db_path) as conn:
+            if set_active:
+                conn.execute(
+                    """
+                    UPDATE user_llm_provider_keys
+                    SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ? AND provider = ?
+                    """,
+                    (int(user_id), prov),
+                )
+            cur = conn.execute(
+                """
+                INSERT INTO user_llm_provider_keys (user_id, provider, api_key_ciphertext, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (int(user_id), prov, str(api_key_ciphertext), 1 if set_active else 0),
+            )
+            conn.commit()
+            return int(cur.lastrowid or 0)
+
+    def list_user_llm_provider_keys(
+        self, user_id: int, provider: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        prov = str(provider or "").strip().lower()
+        with sqlite3.connect(self.db_path) as conn:
+            if prov:
+                rows = conn.execute(
+                    """
+                    SELECT id, provider, is_active, created_at, updated_at
+                    FROM user_llm_provider_keys
+                    WHERE user_id = ? AND provider = ?
+                    ORDER BY id DESC
+                    """,
+                    (int(user_id), prov),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, provider, is_active, created_at, updated_at
+                    FROM user_llm_provider_keys
+                    WHERE user_id = ?
+                    ORDER BY provider ASC, id DESC
+                    """,
+                    (int(user_id),),
+                ).fetchall()
+            out: List[Dict[str, Any]] = []
+            for r in rows or []:
+                out.append(
+                    {
+                        "id": int(r[0]),
+                        "provider": str(r[1] or ""),
+                        "is_active": bool(r[2]),
+                        "created_at": r[3],
+                        "updated_at": r[4],
+                    }
+                )
+            return out
+
+    def get_active_user_llm_provider_key_ciphertext(
+        self, user_id: int, provider: str
+    ) -> Optional[str]:
+        prov = str(provider or "").strip().lower()
+        if not prov:
+            return None
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT api_key_ciphertext
+                FROM user_llm_provider_keys
+                WHERE user_id = ? AND provider = ? AND is_active = 1
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (int(user_id), prov),
+            ).fetchone()
+            if not row:
+                return None
+            return str(row[0] or "")
+
+    def set_active_user_llm_provider_key(
+        self, user_id: int, provider: str, key_id: int
+    ) -> bool:
+        prov = str(provider or "").strip().lower()
+        if not prov:
+            return False
+        kid = int(key_id)
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT id FROM user_llm_provider_keys WHERE id = ? AND user_id = ? AND provider = ?",
+                (kid, int(user_id), prov),
+            ).fetchone()
+            if not row:
+                return False
+            conn.execute(
+                """
+                UPDATE user_llm_provider_keys
+                SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND provider = ?
+                """,
+                (int(user_id), prov),
+            )
+            conn.execute(
+                """
+                UPDATE user_llm_provider_keys
+                SET is_active = 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ? AND provider = ?
+                """,
+                (kid, int(user_id), prov),
+            )
+            conn.commit()
+            return True
+
+    def delete_user_llm_provider_key(self, user_id: int, provider: str, key_id: int) -> bool:
+        prov = str(provider or "").strip().lower()
+        if not prov:
+            return False
+        kid = int(key_id)
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT is_active FROM user_llm_provider_keys WHERE id = ? AND user_id = ? AND provider = ?",
+                (kid, int(user_id), prov),
+            ).fetchone()
+            if not row:
+                return False
+            was_active = bool(row[0])
+            cur = conn.execute(
+                "DELETE FROM user_llm_provider_keys WHERE id = ? AND user_id = ? AND provider = ?",
+                (kid, int(user_id), prov),
+            )
+            if was_active:
+                next_row = conn.execute(
+                    """
+                    SELECT id FROM user_llm_provider_keys
+                    WHERE user_id = ? AND provider = ?
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (int(user_id), prov),
+                ).fetchone()
+                if next_row:
+                    conn.execute(
+                        """
+                        UPDATE user_llm_provider_keys
+                        SET is_active = 1, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ? AND user_id = ? AND provider = ?
+                        """,
+                        (int(next_row[0]), int(user_id), prov),
+                    )
+            conn.commit()
+            return int(cur.rowcount or 0) > 0
+
+    def get_user_onboarding_completed(self, user_id: int) -> Optional[bool]:
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT completed FROM user_onboarding WHERE user_id = ?",
+                (int(user_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            return bool(row[0])
+
+    def set_user_onboarding_completed(self, user_id: int, completed: bool) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO user_onboarding (user_id, completed, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET
+                  completed=excluded.completed,
+                  updated_at=CURRENT_TIMESTAMP
+                """,
+                (int(user_id), 1 if bool(completed) else 0),
             )
             conn.commit()
 
@@ -1706,6 +2061,82 @@ class DatabaseManager:
                 "updated_at": row["updated_at"],
             }
 
+    def add_user_command_autoapprove(self, user_id: int, command_norm: str) -> bool:
+        v = str(command_norm or "").strip().lower()
+        if not v:
+            return False
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO user_command_autoapprove (user_id, command_norm)
+                VALUES (?, ?)
+                """,
+                (int(user_id), v),
+            )
+            conn.commit()
+            return bool(cur.rowcount and int(cur.rowcount) > 0)
+
+    def list_user_command_autoapprove(self, user_id: int, limit: int = 200) -> List[str]:
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT command_norm
+                FROM user_command_autoapprove
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (int(user_id), int(limit)),
+            ).fetchall()
+            return [str(r[0] or "") for r in rows if r and r[0]]
+
+    def delete_user_command_autoapprove(self, user_id: int, command_norm: str) -> bool:
+        v = str(command_norm or "").strip().lower()
+        if not v:
+            return False
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute(
+                "DELETE FROM user_command_autoapprove WHERE user_id = ? AND command_norm = ?",
+                (int(user_id), v),
+            )
+            conn.commit()
+            return bool(cur.rowcount and int(cur.rowcount) > 0)
+
+    def add_conversation_cli_summary(
+        self, user_id: int, conversation_id: int, execution_id: str, summary: str
+    ) -> bool:
+        eid = str(execution_id or "").strip()
+        text = _redact_text(summary) or ""
+        if not eid or not text:
+            return False
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO conversation_cli_summaries
+                (user_id, conversation_id, execution_id, summary)
+                VALUES (?, ?, ?, ?)
+                """,
+                (int(user_id), int(conversation_id), eid, text),
+            )
+            conn.commit()
+            return bool(cur.rowcount and int(cur.rowcount) > 0)
+
+    def has_conversation_cli_summary(self, user_id: int, execution_id: str) -> bool:
+        eid = str(execution_id or "").strip()
+        if not eid:
+            return False
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM conversation_cli_summaries
+                WHERE user_id = ? AND execution_id = ?
+                LIMIT 1
+                """,
+                (int(user_id), eid),
+            ).fetchone()
+            return bool(row)
+
     def upsert_user_soul(
         self, user_id: int, soul_data: Dict[str, Any], soul_markdown: str
     ) -> None:
@@ -1767,6 +2198,63 @@ class DatabaseManager:
                 (user_id, int(limit)),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def set_soul_event_salience(self, user_id: int, event_id: int, salience: float) -> bool:
+        try:
+            s = float(salience)
+        except Exception:
+            s = 0.5
+        s = max(0.0, min(1.0, s))
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute(
+                "UPDATE user_soul_events SET salience=?, last_used_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?",
+                (s, int(event_id), int(user_id)),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def list_imported_soul_events(self, user_id: int, limit: int = 25) -> List[Dict[str, Any]]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT id, source, content, created_at, salience, pinned
+                FROM user_soul_events
+                WHERE user_id = ? AND source LIKE 'imported%'
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (int(user_id), int(limit)),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def set_soul_event_pinned(self, user_id: int, event_id: int, pinned: bool) -> bool:
+        v = 1 if bool(pinned) else 0
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute(
+                "UPDATE user_soul_events SET pinned=? WHERE id=? AND user_id=?",
+                (v, int(event_id), int(user_id)),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def delete_imported_soul_event(self, user_id: int, event_id: int) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT source FROM user_soul_events WHERE id=? AND user_id=?",
+                (int(event_id), int(user_id)),
+            ).fetchone()
+            if not row:
+                return False
+            src = str(row[0] or "")
+            if not src.startswith("imported"):
+                return False
+            cur = conn.execute(
+                "DELETE FROM user_soul_events WHERE id=? AND user_id=?",
+                (int(event_id), int(user_id)),
+            )
+            conn.commit()
+            return cur.rowcount > 0
 
     def create_friction_event(self, payload: Dict[str, Any], mode: str) -> int:
         with sqlite3.connect(self.db_path) as conn:
@@ -1985,7 +2473,7 @@ class DatabaseManager:
     # ── Projects ──────────────────────────────────────────────────────────────
 
     def create_project(self, user_id: int, name: str, context_md: str = "") -> int:
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             cur = conn.execute(
                 "INSERT INTO projects (user_id, name, context_md) VALUES (?, ?, ?)",
                 (user_id, name, context_md),
@@ -2014,13 +2502,41 @@ class DatabaseManager:
     def update_project_context(
         self, project_id: int, user_id: int, context_md: str
     ) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute(
                 """UPDATE projects SET context_md=?, updated_at=CURRENT_TIMESTAMP
                    WHERE id=? AND user_id=?""",
                 (context_md, project_id, user_id),
             )
             conn.commit()
+
+    def update_project_name(self, project_id: int, user_id: int, name: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE projects SET name=?, updated_at=CURRENT_TIMESTAMP
+                   WHERE id=? AND user_id=?""",
+                (name, project_id, user_id),
+            )
+            conn.commit()
+
+    def delete_project(self, project_id: int, user_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM projects WHERE id=? AND user_id=?",
+                (project_id, user_id),
+            ).fetchone()
+            if not row:
+                return False
+            conn.execute(
+                "UPDATE conversations SET project_id=NULL WHERE project_id=?",
+                (project_id,),
+            )
+            conn.execute(
+                "DELETE FROM projects WHERE id=? AND user_id=?",
+                (project_id, user_id),
+            )
+            conn.commit()
+            return True
 
     def set_conversation_project(
         self, conversation_id: int, project_id: Optional[int]
@@ -2228,6 +2744,9 @@ def get_conversation_messages(conversation_id: int) -> List[Dict[str, Any]]:
     """Obtém mensagens de uma conversa"""
     return db_manager.get_conversation_messages(conversation_id)
 
+def get_message(message_id: int) -> Optional[Dict[str, Any]]:
+    return db_manager.get_message(message_id)
+
 
 def save_message(
     conversation_id: int,
@@ -2263,6 +2782,12 @@ def add_task_todo(
     user_id: int,
     conversation_id: int,
     text: str,
+    kind: Optional[str] = None,
+    actor: Optional[str] = None,
+    origin: Optional[str] = None,
+    scope: Optional[str] = None,
+    priority: Optional[str] = None,
+    due_at: Optional[str] = None,
     parent_todo_id: Optional[int] = None,
     delivery_path: Optional[str] = None,
     artifact_meta: Optional[Any] = None,
@@ -2273,6 +2798,12 @@ def add_task_todo(
         user_id,
         conversation_id,
         text,
+        kind=kind,
+        actor=actor,
+        origin=origin,
+        scope=scope,
+        priority=priority,
+        due_at=due_at,
         parent_todo_id=parent_todo_id,
         delivery_path=delivery_path,
         artifact_meta=artifact_meta,
@@ -2296,6 +2827,12 @@ def update_task_todo(
     todo_id: int,
     text: Optional[str] = None,
     status: Optional[str] = None,
+    kind: Optional[str] = None,
+    actor: Optional[str] = None,
+    origin: Optional[str] = None,
+    scope: Optional[str] = None,
+    priority: Optional[str] = None,
+    due_at: Optional[str] = None,
     parent_todo_id: Optional[int] = None,
     delivery_path: Optional[str] = None,
     artifact_meta: Optional[Any] = None,
@@ -2307,6 +2844,12 @@ def update_task_todo(
         todo_id,
         text=text,
         status=status,
+        kind=kind,
+        actor=actor,
+        origin=origin,
+        scope=scope,
+        priority=priority,
+        due_at=due_at,
         parent_todo_id=parent_todo_id,
         delivery_path=delivery_path,
         artifact_meta=artifact_meta,
@@ -2377,6 +2920,26 @@ def upsert_user_security_settings(
 def get_user_security_settings(user_id: int) -> Optional[Dict[str, Any]]:
     return db_manager.get_user_security_settings(user_id)
 
+def add_user_command_autoapprove(user_id: int, command_norm: str) -> bool:
+    return db_manager.add_user_command_autoapprove(user_id, command_norm)
+
+
+def list_user_command_autoapprove(user_id: int, limit: int = 200) -> List[str]:
+    return db_manager.list_user_command_autoapprove(user_id, limit=limit)
+
+
+def delete_user_command_autoapprove(user_id: int, command_norm: str) -> bool:
+    return db_manager.delete_user_command_autoapprove(user_id, command_norm)
+
+def add_conversation_cli_summary(
+    user_id: int, conversation_id: int, execution_id: str, summary: str
+) -> bool:
+    return db_manager.add_conversation_cli_summary(user_id, conversation_id, execution_id, summary)
+
+
+def has_conversation_cli_summary(user_id: int, execution_id: str) -> bool:
+    return db_manager.has_conversation_cli_summary(user_id, execution_id)
+
 
 def upsert_user_api_key_ciphertext(user_id: int, api_key_ciphertext: str) -> None:
     return db_manager.upsert_user_api_key_ciphertext(user_id, api_key_ciphertext)
@@ -2385,9 +2948,56 @@ def upsert_user_api_key_ciphertext(user_id: int, api_key_ciphertext: str) -> Non
 def get_user_api_key_ciphertext(user_id: int) -> Optional[str]:
     return db_manager.get_user_api_key_ciphertext(user_id)
 
+def set_soul_event_salience(user_id: int, event_id: int, salience: float) -> bool:
+    return db_manager.set_soul_event_salience(user_id, event_id, salience)
+
+
+def list_imported_soul_events(user_id: int, limit: int = 25) -> List[Dict[str, Any]]:
+    return db_manager.list_imported_soul_events(user_id, limit=limit)
+
+
+def set_soul_event_pinned(user_id: int, event_id: int, pinned: bool) -> bool:
+    return db_manager.set_soul_event_pinned(user_id, event_id, pinned)
+
+
+def delete_imported_soul_event(user_id: int, event_id: int) -> bool:
+    return db_manager.delete_imported_soul_event(user_id, event_id)
+
 
 def delete_user_api_key(user_id: int) -> bool:
     return db_manager.delete_user_api_key(user_id)
+
+
+def add_user_llm_provider_key_ciphertext(
+    user_id: int, provider: str, api_key_ciphertext: str, set_active: bool = True
+) -> int:
+    return db_manager.add_user_llm_provider_key_ciphertext(
+        user_id, provider, api_key_ciphertext, set_active=set_active
+    )
+
+
+def list_user_llm_provider_keys(user_id: int, provider: Optional[str] = None) -> List[Dict[str, Any]]:
+    return db_manager.list_user_llm_provider_keys(user_id, provider=provider)
+
+
+def get_active_user_llm_provider_key_ciphertext(user_id: int, provider: str) -> Optional[str]:
+    return db_manager.get_active_user_llm_provider_key_ciphertext(user_id, provider)
+
+
+def set_active_user_llm_provider_key(user_id: int, provider: str, key_id: int) -> bool:
+    return db_manager.set_active_user_llm_provider_key(user_id, provider, key_id)
+
+
+def delete_user_llm_provider_key(user_id: int, provider: str, key_id: int) -> bool:
+    return db_manager.delete_user_llm_provider_key(user_id, provider, key_id)
+
+
+def get_user_onboarding_completed(user_id: int) -> Optional[bool]:
+    return db_manager.get_user_onboarding_completed(user_id)
+
+
+def set_user_onboarding_completed(user_id: int, completed: bool) -> None:
+    return db_manager.set_user_onboarding_completed(user_id, completed)
 
 
 def upsert_user_connector_secret_ciphertext(
@@ -2560,6 +3170,12 @@ def get_user_projects(user_id: int) -> list:
 
 def get_project(project_id: int, user_id: int) -> Optional[dict]:
     return db_manager.get_project(project_id, user_id)
+
+def update_project_name(project_id: int, user_id: int, name: str) -> None:
+    return db_manager.update_project_name(project_id, user_id, name)
+
+def delete_project(project_id: int, user_id: int) -> bool:
+    return db_manager.delete_project(project_id, user_id)
 
 
 def update_project_context(project_id: int, user_id: int, context_md: str) -> None:

@@ -366,6 +366,14 @@ class LLMManager:
         base = expert_prompt.strip()
         ctx = (user_context or "").strip()
         expert_id = str((expert or {}).get("id") or "").strip().lower()
+        if ctx and "SYS_GLOBAL" in ctx and "--- Instruções internas ---" in ctx:
+            start = ctx.find("--- Instruções internas ---")
+            end = ctx.find("--- Fim instruções ---", start)
+            if start != -1 and end != -1:
+                end = end + len("--- Fim instruções ---")
+                internal_block = ctx[start:end].strip()
+                ctx = f"{ctx[:start].strip()}\n\n{ctx[end:].strip()}".strip()
+                base = f"{internal_block}\n\n{base}".strip()
 
         if expert_id in {"cto", "general"}:
             tree = self._summarize_project_tree()

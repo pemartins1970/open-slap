@@ -21,18 +21,29 @@ const useAuth = () => {
         if (savedToken && savedUser) {
           // Sincronizar token state
           setToken(savedToken);
-
-          const response = await fetch('/auth/me', {
-            headers: {
-              'Authorization': `Bearer ${savedToken}`,
-              'Content-Type': 'application/json'
+          try {
+            const parsedUser = JSON.parse(savedUser);
+            if (parsedUser && typeof parsedUser === 'object') {
+              setUser(parsedUser);
             }
-          });
+          } catch {}
 
-          if (response.ok) {
+          let response = null;
+          try {
+            response = await fetch('/auth/me', {
+              headers: {
+                'Authorization': `Bearer ${savedToken}`,
+                'Content-Type': 'application/json'
+              }
+            });
+          } catch {
+            response = null;
+          }
+
+          if (response && response.ok) {
             const userData = await response.json();
             setUser(userData);
-          } else {
+          } else if (response && (response.status === 401 || response.status === 403)) {
             localStorage.removeItem('agentic_token');
             localStorage.removeItem('agentic_user');
             setToken(null);
@@ -41,10 +52,6 @@ const useAuth = () => {
         }
       } catch (error) {
         console.error('Auth verification error:', error);
-        localStorage.removeItem('agentic_token');
-        localStorage.removeItem('agentic_user');
-        setToken(null);
-        setUser(null);
       } finally {
         setLoading(false);
       }

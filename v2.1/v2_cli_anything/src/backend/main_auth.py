@@ -48,7 +48,7 @@ from fastapi import (
     Query,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -56,10 +56,19 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 import aiohttp
+import sqlite3
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(dotenv_path=BASE_DIR / ".env", override=False)
 logger = logging.getLogger(__name__)
+
+if sys.platform == "win32":
+    try:
+        _pol = getattr(asyncio, "WindowsProactorEventLoopPolicy", None)
+        if _pol:
+            asyncio.set_event_loop_policy(_pol())
+    except Exception:
+        pass
 
 # Importar módulos locais
 from .auth import (
@@ -75,6 +84,7 @@ from .db import (
     create_conversation,
     get_user_conversations,
     get_conversation_messages,
+    get_message,
     save_message,
     delete_conversation,
     get_conversation_by_session_for_user,
@@ -96,6 +106,8 @@ from .db import (
     get_user_projects,
     get_project,
     update_project_context,
+    update_project_name,
+    delete_project,
     set_conversation_project,
     decay_memory,
     reinforce_memory_usage,
@@ -117,9 +129,21 @@ from .db import (
     get_user_llm_settings,
     upsert_user_security_settings,
     get_user_security_settings,
+    add_user_command_autoapprove,
+    list_user_command_autoapprove,
+    delete_user_command_autoapprove,
+    add_conversation_cli_summary,
+    has_conversation_cli_summary,
     upsert_user_api_key_ciphertext,
     get_user_api_key_ciphertext,
     delete_user_api_key,
+    add_user_llm_provider_key_ciphertext,
+    list_user_llm_provider_keys,
+    get_active_user_llm_provider_key_ciphertext,
+    set_active_user_llm_provider_key,
+    delete_user_llm_provider_key,
+    get_user_onboarding_completed,
+    set_user_onboarding_completed,
     upsert_user_connector_secret_ciphertext,
     get_user_connector_secret_ciphertext,
     delete_user_connector_secret,
@@ -139,15 +163,18 @@ from .db import (
     upsert_user_soul,
     get_user_soul,
     append_soul_event,
+    set_soul_event_salience,
     list_soul_events,
+    list_imported_soul_events,
+    set_soul_event_pinned,
+    delete_imported_soul_event,
     get_cached_answer,
     put_cached_answer,
     search_user_memory,
     log_cli_command,
 )
 from .forge_harnesses import discover_harnesses, build_harnesses_context_block
-from .llm_manager_simple import LLMManager
-from .moe_router_simple import MoERouter
+from .runtime import llm_manager, moe_router
 from .cli_bridge import (
     parse_cli_command_text,
     build_dynamic_whitelist,
@@ -157,6 +184,24 @@ from .cli_bridge import (
     _safe_str_value,
     _collect_artifacts,
 )
+from .padxml import normalize_padxml, validate_padxml_v1
+from .deps import (
+    SECURITY_SETTINGS_DEFAULT,
+    _dpapi_protect_text,
+    _dpapi_unprotect_text,
+    _ensure_connectors_allowed,
+    _get_effective_security_settings,
+    _get_user_connector_secret,
+    _get_user_connector_secret_raw,
+    _sanitize_api_key,
+    security,
+    security_optional,
+)
+from .routes.connectors_settings import router as connectors_settings_router
+from .routes.conversations_tasks import router as conversations_tasks_router
+from .routes.settings import router as settings_router
+from .routes.autoapprove import router as autoapprove_router
+from .routes.meta import router as meta_router
 
 # Configurações
 app = FastAPI(title="Agêntico Backend", version="1.0.0")
@@ -181,13 +226,28 @@ def _ensure_workdir_ready() -> Optional[str]:
         p.mkdir(parents=True, exist_ok=True)
         t = p / f".writetest_{uuid.uuid4().hex[:8]}"
         t.write_text("ok", encoding="utf-8")
+        t2 = p / f".writetest_{uuid.uuid4().hex[:8]}.py"
+        t2.write_text("print('ok')\n", encoding="utf-8")
         try:
             t.unlink()
+        except Exception:
+            pass
+        try:
+            t2.unlink()
         except Exception:
             pass
         return None
     except Exception as e:
         return str(e)
+
+
+_workdir_err = _ensure_workdir_ready()
+if _workdir_err:
+    try:
+        DEFAULT_WORKDIR = (MEDIA_DIR / "workspace").resolve()
+        DEFAULT_WORKDIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        DEFAULT_WORKDIR = MEDIA_DIR
 
 
 def _env_flag(v: Optional[str], default: bool = False) -> bool:
@@ -448,12 +508,8 @@ app.add_middleware(
 )
 
 # Segurança
-security = HTTPBearer()
-security_optional = HTTPBearer(auto_error=False)
 
 # Componentes
-llm_manager = LLMManager()
-moe_router = MoERouter()
 
 # Armazenamento de sessões WebSocket
 active_connections: Dict[str, WebSocket] = {}
@@ -483,6 +539,92 @@ ENABLE_EXTERNAL_SOFTWARE = settings.enable_external_software
 FORGE_IDE_MODE = _env_flag(os.getenv("FORGE_IDE_MODE"), False)
 FORGE_IDE_EMAIL = str(os.getenv("FORGE_IDE_EMAIL") or "forge@localhost").strip().lower()
 FORGE_IDE_TOKEN_TTL_MINUTES = _env_int(os.getenv("FORGE_IDE_TOKEN_TTL_MINUTES"), 120)
+
+_system_map_cache: Dict[str, Any] = {"ascii": "", "generated_at": ""}
+
+def _generate_system_map_ascii() -> str:
+    root = Path(str(BASE_DIR))
+    target_dirs = [
+        root / "frontend" / "src",
+        root / "backend",
+    ]
+    ignore_dirs = {
+        ".git",
+        ".venv",
+        "node_modules",
+        "dist",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "media",
+        ".trae",
+    }
+
+    def _tree(dir_path: Path, depth: int = 0, max_depth: int = 2) -> List[str]:
+        if depth > max_depth:
+            return []
+        lines2: List[str] = []
+        try:
+            entries = sorted(
+                list(dir_path.iterdir()),
+                key=lambda p: (not p.is_dir(), p.name.lower()),
+            )
+        except Exception:
+            return []
+        filtered = [p for p in entries if p.name not in ignore_dirs]
+        for i, p in enumerate(filtered):
+            name = p.name
+            is_last = i == (len(filtered) - 1)
+            prefix = ("│  " * depth) + ("└─ " if is_last else "├─ ")
+            if p.is_dir():
+                lines2.append(f"{prefix}{name}/")
+                lines2.extend(_tree(p, depth + 1, max_depth))
+            else:
+                lines2.append(f"{prefix}{name}")
+        return lines2
+
+    counts = {"py": 0, "js": 0, "ts": 0}
+    for d in target_dirs:
+        try:
+            if not d.exists():
+                continue
+            for p in d.rglob("*"):
+                if p.is_dir():
+                    if p.name in ignore_dirs:
+                        continue
+                    continue
+                suf = p.suffix.lower()
+                if suf == ".py":
+                    counts["py"] += 1
+                elif suf == ".js":
+                    counts["js"] += 1
+                elif suf in {".ts", ".tsx"}:
+                    counts["ts"] += 1
+        except Exception:
+            continue
+
+    lines: List[str] = []
+    lines.append("Open Slap! — Mapa do Sistema")
+    lines.append("")
+    lines.append("Arquivos (amostra):")
+    lines.append(f"- backend: .py={counts['py']}")
+    lines.append(f"- frontend: .js={counts['js']} .ts/.tsx={counts['ts']}")
+    lines.append("")
+    lines.append("Estrutura (parcial):")
+    for d in target_dirs:
+        try:
+            rel = str(d.relative_to(root)).replace("\\", "/")
+        except Exception:
+            rel = str(d).replace("\\", "/")
+        lines.append(rel + "/")
+        lines.extend(_tree(d, depth=0, max_depth=2))
+        lines.append("")
+    lines.append("Fluxos principais:")
+    lines.append("- Chat → WS → execução (software_operator) → resumo persistido → histórico")
+    lines.append("- CTA 'Salvar informações' → /api/padxml/save_message → padxml.db → leitura via API")
+    lines.append("- Permissões de comando → 'apenas agora' ou 'automaticamente' (revogável)")
+    return "\n".join(lines).strip() + "\n"
 
 
 def _strip_assistant_directives(text: str) -> str:
@@ -865,6 +1007,23 @@ def _todo_items_from_user_message(user_message: str) -> List[str]:
                 items.append(p[:240] if len(p) > 240 else p)
 
     if not items:
+        try:
+            if ":" in text and any(k in lower for k in ("tarefas", "todo", "to-do", "pendenc", "pendênc")):
+                head, tail = text.split(":", 1)
+                tail = (tail or "").strip()
+                if tail and any(sep in tail for sep in (";", ",")):
+                    parts = re.split(r"[;,]\s*|\s+\be\b\s+|\s+\bou\b\s+", tail)
+                    for p in parts:
+                        p = p.strip()
+                        if not p:
+                            continue
+                        p = " ".join(p.split()).strip()
+                        if p:
+                            items.append(p[:240] if len(p) > 240 else p)
+        except Exception:
+            pass
+
+    if not items:
         action_starts = (
             "comprar",
             "pagar",
@@ -959,6 +1118,17 @@ def _todo_items_from_user_message(user_message: str) -> List[str]:
     return out
 
 
+def _looks_like_personal_todo_capture(user_message: str) -> bool:
+    lower = " ".join(str(user_message or "").lower().split()).strip()
+    if not lower:
+        return False
+    if "tarefas pessoais" in lower or "minhas tarefas pessoais" in lower:
+        return True
+    if "transforme em todos" in lower or "transformar em todos" in lower:
+        return True
+    return False
+
+
 def _get_or_create_task_inbox_id(user_id: int) -> int:
     inbox_session_id = f"task-inbox:{int(user_id)}"
     inbox = get_conversation_by_session_for_user(int(user_id), inbox_session_id)
@@ -977,7 +1147,16 @@ def _record_activity_done(user_id: int, text: str, *, task_conversation_id: Opti
     msg = msg[:520] if len(msg) > 520 else msg
     target_id = int(task_conversation_id) if task_conversation_id else _get_or_create_task_inbox_id(int(user_id))
     try:
-        todo_id = add_task_todo(int(user_id), int(target_id), msg)
+        todo_id = add_task_todo(
+            int(user_id),
+            int(target_id),
+            msg,
+            kind="step",
+            actor="agent",
+            origin="assistant",
+            scope=("project" if task_conversation_id else "personal"),
+            priority="low",
+        )
         update_task_todo(int(user_id), int(todo_id), status="done")
     except Exception:
         pass
@@ -1008,22 +1187,6 @@ class ChatMessage(BaseModel):
     content: str
 
 
-class ConversationCreate(BaseModel):
-    title: str
-
-
-class TitleUpdate(BaseModel):
-    title: str
-
-
-class GitHubConnectInput(BaseModel):
-    token: str
-
-
-class TokenConnectInput(BaseModel):
-    token: str
-
-
 class TelegramLinkConsumeInput(BaseModel):
     code: str
     telegram_user_id: str
@@ -1043,26 +1206,6 @@ class TelegramInboundInput(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
-class TodoCreate(BaseModel):
-    text: str
-    parent_todo_id: Optional[int] = None
-    delivery_path: Optional[str] = None
-    artifact_meta: Optional[Dict[str, Any]] = None
-
-
-class AutomationClientSettingsInput(BaseModel):
-    base_url: str
-    api_key: Optional[str] = None
-
-
-class TodoUpdate(BaseModel):
-    text: Optional[str] = None
-    status: Optional[str] = None
-    parent_todo_id: Optional[int] = None
-    delivery_path: Optional[str] = None
-    artifact_meta: Optional[Dict[str, Any]] = None
-
-
 class SkillsUpdate(BaseModel):
     skills: List[Dict[str, Any]]
 
@@ -1080,27 +1223,6 @@ class FrictionReportInput(BaseModel):
     connector_active: Optional[str] = None
     product: str = "open-slap"
     tier: str = "free"
-
-
-class LlmSettingsInput(BaseModel):
-    mode: str
-    provider: Optional[str] = None
-    model: Optional[str] = None
-    base_url: Optional[str] = None
-    api_key: Optional[str] = None
-
-
-class LanguageSettingsInput(BaseModel):
-    lang: str
-
-
-class SecuritySettingsInput(BaseModel):
-    sandbox: Optional[bool] = None
-    allow_os_commands: Optional[bool] = None
-    allow_file_write: Optional[bool] = None
-    allow_web_retrieval: Optional[bool] = None
-    allow_connectors: Optional[bool] = None
-    allow_system_profile: Optional[bool] = None
 
 
 class CommandExecuteInput(BaseModel):
@@ -1157,6 +1279,20 @@ def _normalize_cwd(*, cwd: Optional[str], user_id: int) -> str:
     if not v:
         return os.path.abspath(str(BASE_DIR))
     return os.path.abspath(v)
+
+def _normalize_command_key(command: str) -> str:
+    tokens = [t for t in re.split(r"\s+", str(command or "").strip()) if t]
+    return " ".join(tokens).strip().lower()
+
+def _is_user_autoapproved_command(*, user_id: int, command: str) -> bool:
+    try:
+        key = _normalize_command_key(command)
+        if not key:
+            return False
+        items = list_user_command_autoapprove(int(user_id), limit=400) or []
+        return key in set([str(x or "").strip().lower() for x in items if x])
+    except Exception:
+        return False
 
 
 def _command_policy_evaluate(
@@ -1252,12 +1388,77 @@ def _command_policy_evaluate(
             "allowed_roots": roots,
         }
 
+    # Heurística: scripts Python temporários gerados pelo agente apenas para leitura (HTTP GET)
+    # Ex.: python C:\...\media\workspace\temp_tool_*.py
+    if first in {"python", "python3", "py"} and "temp_tool_" in lower and ".py" in lower:
+        try:
+            # Extrair caminho do script
+            script_path = None
+            for t in tokens[1:]:
+                if t.lower().endswith(".py"):
+                    script_path = t.strip().strip('"\''",")
+                    break
+            if script_path:
+                sp = Path(script_path)
+                if sp.exists() and sp.is_file():
+                    # Ler com limite de tamanho
+                    text = sp.read_text(encoding="utf-8", errors="ignore")
+                    lt = text.lower()
+                    # Critérios de leitura segura:
+                    # - Usa apenas GET/consulta web; não faz escrita em disco nem subprocessos
+                    web_reads = any(
+                        pat in lt
+                        for pat in [
+                            "requests.get(",
+                            "urllib.request.urlopen(",
+                            "http.client",
+                            "aiohttp",
+                        ]
+                    ) and re.search(r"https?://", lt) is not None
+                    no_writes = all(
+                        kw not in lt
+                        for kw in [
+                            "open(",
+                            ".write(",
+                            "os.remove(",
+                            "shutil.",
+                            "subprocess",
+                            "psutil",
+                            "winreg",
+                        ]
+                    )
+                    no_shell = ("os.system(" not in lt) and ("Popen(" not in lt)
+                    if web_reads and no_writes and no_shell and not has_redirection:
+                        return {
+                            "allowed": True,
+                            "blocked_reason": "",
+                            "requires_confirmation": False,
+                            "risk_level": 0,
+                            "cwd": eff_cwd,
+                            "cwd_allowed": cwd_ok,
+                            "allowed_roots": roots,
+                        }
+        except Exception:
+            pass
+
     if not cwd_ok:
         return {
             "allowed": False,
             "blocked_reason": "Diretório de execução fora das pastas permitidas.",
             "requires_confirmation": True,
             "risk_level": 2,
+            "cwd": eff_cwd,
+            "cwd_allowed": cwd_ok,
+            "allowed_roots": roots,
+        }
+
+    if _is_user_autoapproved_command(user_id=int(user_id), command=cmd):
+        return {
+            "allowed": True,
+            "blocked_reason": "",
+            "requires_confirmation": False,
+            "risk_level": 0,
+            "auto_approved": True,
             "cwd": eff_cwd,
             "cwd_allowed": cwd_ok,
             "allowed_roots": roots,
@@ -1560,6 +1761,16 @@ async def _run_external_software_skill(
             await websocket.send_json(payload)
         except Exception:
             pass
+
+    def _build_persisted_summary(*, res_obj: Dict[str, Any], stdout_text: str, stderr_text: str) -> str:
+        vs = str(res_obj.get("visual_state_summary") or "").strip()
+        if vs:
+            return vs[:800]
+        pick = (stdout_text or "").strip() or (stderr_text or "").strip()
+        if not pick:
+            return ""
+        lines = [ln.strip() for ln in pick.splitlines() if ln.strip()]
+        return "\n".join(lines[:6])[:800]
 
     async def _run_one_attempt(*, command_line: str, attempt: int) -> Dict[str, Any]:
         timeout_final = int(
@@ -1887,6 +2098,21 @@ if __name__ == "__main__":
                         "timeout_s": timeout_final,
                     }
                 )
+                if (
+                    "<DIR>" in code_text
+                    or "<CWD>" in code_text
+                    or "<WORKDIR>" in code_text
+                    or "<OUTPUT>" in code_text
+                    or "<OUT>" in code_text
+                ):
+                    repl = str(base_dir).replace("\\", "\\\\")
+                    code_text = (
+                        code_text.replace("<DIR>", repl)
+                        .replace("<CWD>", repl)
+                        .replace("<WORKDIR>", repl)
+                        .replace("<OUTPUT>", repl)
+                        .replace("<OUT>", repl)
+                    )
                 tool_path.write_text(code_text, encoding="utf-8", errors="ignore")
                 exe_py = sys.executable or "python"
                 args = [exe_py, str(tool_path)]
@@ -1926,6 +2152,86 @@ if __name__ == "__main__":
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd_dir or None,
             )
+        except NotImplementedError:
+            loop = asyncio.get_event_loop()
+
+            def _run_sync():
+                try:
+                    r = subprocess.run(
+                        args,
+                        capture_output=True,
+                        text=True,
+                        timeout=max(1, int(timeout_final)),
+                        check=False,
+                        cwd=cwd_dir or None,
+                    )
+                    return {
+                        "timeout": False,
+                        "returncode": int(r.returncode or 0),
+                        "stdout": str(r.stdout or ""),
+                        "stderr": str(r.stderr or ""),
+                    }
+                except subprocess.TimeoutExpired as e:
+                    return {
+                        "timeout": True,
+                        "returncode": -1,
+                        "stdout": str(getattr(e, "stdout", "") or ""),
+                        "stderr": str(getattr(e, "stderr", "") or "")
+                        + f"\nTimeout após {timeout_final}s\n",
+                    }
+
+            res_sync = await loop.run_in_executor(None, _run_sync)
+            retcode = int(res_sync.get("returncode") or 0)
+            status = "success" if retcode == 0 and not res_sync.get("timeout") else "error"
+            full_stdout = str(res_sync.get("stdout") or "")[-8000:]
+            full_stderr = str(res_sync.get("stderr") or "")[-8000:]
+
+            artifacts_dir = (
+                _safe_str_value((params or {}).get("artifacts_dir"))
+                or _sanitize_text(os.getenv((wl.get(app_key) or {}).get("artifacts_env") or ""))
+                or _sanitize_text(os.getenv("OPENSLAP_CLI_ARTIFACTS_DIR") or "")
+            )
+            if not artifacts_dir and app_key == "python-inline":
+                artifacts_dir = _sanitize_text(cwd_dir or "") or _sanitize_text(
+                    str(DEFAULT_WORKDIR)
+                )
+            arts_info = _collect_artifacts(artifacts_dir)
+            visual_summary = _sanitize_text(arts_info.get("summary") or "")
+            reg_artifacts = _register_cli_artifacts(arts_info.get("files") or [])
+
+            await _send_evt(
+                {
+                    "type": "software_operator",
+                    "execution_id": execution_id,
+                    "attempt": int(attempt),
+                    "status": status,
+                    "command_executed": " ".join(args),
+                    "started_at_ms": started_at_ms,
+                    "timeout_s": timeout_final,
+                    "return_ms": int(time.time() * 1000) - started_at_ms,
+                    "stdout": full_stdout,
+                    "stderr": full_stderr,
+                    "visual_state_summary": visual_summary[:4000],
+                    "artifacts": reg_artifacts,
+                }
+            )
+            return {
+                "status": status,
+                "command_executed": " ".join(args),
+                "output": json.dumps(
+                    {
+                        "stdout": full_stdout,
+                        "stderr": full_stderr,
+                        "return_ms": int(time.time() * 1000) - started_at_ms,
+                        "params": safe_params,
+                        "artifacts": arts_info.get("files") or [],
+                    },
+                    ensure_ascii=False,
+                ),
+                "visual_state_summary": visual_summary[:4000],
+                "app_name": app_name,
+                "action": action,
+            }
         except FileNotFoundError:
             msg = f"Executável não encontrado: {exe}. Considere instalar via winget (ex.: winget install --id <PACKAGE_ID>)."
             await _send_evt(
@@ -2086,15 +2392,18 @@ if __name__ == "__main__":
             str(fields.get("stderr") or "").strip()
             or str(res.get("output") or "").strip()
         )
-        retry_cmd = await _generate_software_operator_retry_command(
-            error_text=err_text[:2500],
-            expert=expert,
-            llm_override=llm_override,
-            user_context=user_context or "",
-        )
-        retry_cmd = str(retry_cmd or "").strip()
-        if retry_cmd:
-            res = await _run_one_attempt(command_line=retry_cmd, attempt=2)
+        try:
+            retry_cmd = await _generate_software_operator_retry_command(
+                error_text=err_text[:2500],
+                expert=expert,
+                llm_override=llm_override,
+                user_context=user_context or "",
+            )
+            retry_cmd = str(retry_cmd or "").strip()
+            if retry_cmd:
+                res = await _run_one_attempt(command_line=retry_cmd, attempt=2)
+        except Exception:
+            pass
 
     try:
         log_cli_command(
@@ -2146,6 +2455,31 @@ if __name__ == "__main__":
     fields = _extract_cli_output_fields(str(res.get("output") or ""))
     stdout = str(fields.get("stdout") or "")
     stderr = str(fields.get("stderr") or "")
+
+    try:
+        summary2 = _build_persisted_summary(res_obj=res, stdout_text=stdout, stderr_text=stderr)
+        if summary2 and add_conversation_cli_summary(int(user_id), int(conversation_id), str(execution_id), summary2):
+            msg_id = save_message(
+                int(conversation_id),
+                "assistant",
+                summary2,
+                expert_id="software_operator",
+            )
+            await _send_evt(
+                {
+                    "type": "history",
+                    "message": {
+                        "id": msg_id,
+                        "role": "assistant",
+                        "content": summary2,
+                        "created_at": datetime.utcnow().isoformat() + "Z",
+                        "expert_id": "software_operator",
+                    },
+                }
+            )
+    except Exception:
+        pass
+
     out_lines: List[str] = []
     out_lines.append(
         f"Comando executado: {str(res.get('command_executed') or '').strip()}"
@@ -2363,16 +2697,6 @@ def _safe_llm_settings(inp: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-SECURITY_SETTINGS_DEFAULT: Dict[str, Any] = {
-    "sandbox": False,
-    "allow_os_commands": True,
-    "allow_file_write": True,
-    "allow_web_retrieval": True,
-    "allow_connectors": True,
-    "allow_system_profile": True,
-}
-
-
 def _safe_security_settings(inp: Dict[str, Any]) -> Dict[str, Any]:
     raw = inp or {}
     out = dict(SECURITY_SETTINGS_DEFAULT)
@@ -2388,15 +2712,6 @@ def _safe_security_settings(inp: Dict[str, Any]) -> Dict[str, Any]:
         out["allow_connectors"] = False
         out["allow_system_profile"] = False
     return out
-
-
-def _get_effective_security_settings(user_id: int) -> Dict[str, Any]:
-    stored = get_user_security_settings(int(user_id)) or {}
-    settings = _safe_security_settings((stored or {}).get("settings") or {})
-    return {
-        **settings,
-        "updated_at": (stored or {}).get("updated_at"),
-    }
 
 
 def _extract_files_json(text: str) -> Optional[Dict[str, Any]]:
@@ -3029,6 +3344,140 @@ _installed_cache: List[Dict[str, Any]] = []
 _installed_removed: List[Dict[str, Any]] = []
 
 
+def _merge_sw_items(base: List[Dict[str, Any]], extra: List[Dict[str, Any]], max_items: int = 1200) -> List[Dict[str, Any]]:
+    out = []
+    seen = set()
+    for src in (base or []) + (extra or []):
+        if not isinstance(src, dict):
+            continue
+        name = str(src.get("name") or "").strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "name": name[:120],
+                "version": str(src.get("version") or "").strip()[:60],
+                "id": str(src.get("id") or "").strip()[:120],
+                "source": str(src.get("source") or "").strip()[:60],
+            }
+        )
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def _collect_windows_registry_sw(timeout_s: int = 10) -> List[Dict[str, Any]]:
+    obj = _collect_powershell_json(
+        "$paths=@("
+        "'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
+        "'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
+        "'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'"
+        "); "
+        "Get-ItemProperty $paths -ErrorAction SilentlyContinue | "
+        "Where-Object { $_.DisplayName } | "
+        "Select-Object DisplayName,DisplayVersion,Publisher | ConvertTo-Json -Compress",
+        timeout_s=timeout_s,
+    )
+    rows: List[Dict[str, Any]] = []
+    if isinstance(obj, dict):
+        rows = [obj]
+    elif isinstance(obj, list):
+        rows = obj
+    items: List[Dict[str, Any]] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        name = str(r.get("DisplayName") or "").strip()
+        if not name:
+            continue
+        items.append(
+            {
+                "name": name,
+                "version": str(r.get("DisplayVersion") or "").strip(),
+                "id": str(r.get("Publisher") or "").strip(),
+                "source": "registry",
+            }
+        )
+    return items
+
+
+def _collect_windows_optional_features(timeout_s: int = 10) -> List[Dict[str, Any]]:
+    obj = _collect_powershell_json(
+        "Get-WindowsOptionalFeature -Online -ErrorAction SilentlyContinue | "
+        "Where-Object { $_.FeatureName -like 'IIS*' -and $_.State -eq 'Enabled' } | "
+        "Select-Object FeatureName | ConvertTo-Json -Compress",
+        timeout_s=timeout_s,
+    )
+    rows: List[Dict[str, Any]] = []
+    if isinstance(obj, dict):
+        rows = [obj]
+    elif isinstance(obj, list):
+        rows = obj
+    items: List[Dict[str, Any]] = []
+    enabled = any(
+        isinstance(r, dict)
+        and str(r.get("FeatureName") or "").strip().lower().startswith("iis")
+        for r in rows
+    )
+    if enabled:
+        items.append({"name": "IIS (Windows Feature)", "version": "", "id": "iis", "source": "windows-feature"})
+    return items
+
+
+def _collect_macos_brew_sw(timeout_s: int = 8) -> List[Dict[str, Any]]:
+    txt = _run_bash_text(
+        "command -v brew >/dev/null 2>&1 && brew list --versions 2>/dev/null | head -n 200 || true",
+        timeout_s=timeout_s,
+    )
+    items: List[Dict[str, Any]] = []
+    for line in (txt or "").splitlines():
+        parts = line.strip().split()
+        if not parts:
+            continue
+        name = parts[0]
+        version = parts[1] if len(parts) >= 2 else ""
+        items.append({"name": name, "version": version, "id": "", "source": "brew"})
+    return items
+
+
+def _collect_linux_pkg_sw(timeout_s: int = 8) -> List[Dict[str, Any]]:
+    # Try dpkg, then rpm, then snap/flatpak
+    txt = _run_bash_text("dpkg -l 2>/dev/null | awk '/^ii/ {print $2\"\\t\"$3}' | head -n 400 || true", timeout_s=timeout_s)
+    items: List[Dict[str, Any]] = []
+    if txt.strip():
+        for line in txt.splitlines():
+            parts = line.strip().split("\t")
+            if not parts:
+                continue
+            name = parts[0]
+            ver = parts[1] if len(parts) >= 2 else ""
+            items.append({"name": name, "version": ver, "id": "", "source": "dpkg"})
+        return items
+    txt2 = _run_bash_text("rpm -qa 2>/dev/null | head -n 400 || true", timeout_s=timeout_s)
+    if txt2.strip():
+        for line in txt2.splitlines():
+            name = line.strip()
+            if not name:
+                continue
+            items.append({"name": name, "version": "", "id": "", "source": "rpm"})
+    # Snap / Flatpak (optional)
+    snap = _run_bash_text("command -v snap >/dev/null 2>&1 && snap list 2>/dev/null | awk 'NR>1{print $1\"\\t\"$2}' | head -n 200 || true", timeout_s=timeout_s)
+    for line in (snap or "").splitlines():
+        parts = line.strip().split("\t")
+        if parts:
+            items.append({"name": parts[0], "version": parts[1] if len(parts) >= 2 else "", "id": "", "source": "snap"})
+    flat = _run_bash_text("command -v flatpak >/dev/null 2>&1 && flatpak list --app 2>/dev/null | awk -F'\\t' '{print $1\"\\t\"$2}' | head -n 200 || true", timeout_s=timeout_s)
+    for line in (flat or "").splitlines():
+        parts = line.strip().split("\t")
+        if parts:
+            items.append({"name": parts[0], "version": parts[1] if len(parts) >= 2 else "", "id": "", "source": "flatpak"})
+    return items
+
+
 def get_installed_software(max_age_s: int = 21600) -> List[Dict[str, Any]]:
     global _installed_cache_ts, _installed_cache, _installed_removed
     now = datetime.utcnow().timestamp()
@@ -3055,6 +3504,7 @@ def get_installed_software(max_age_s: int = 21600) -> List[Dict[str, Any]]:
             )
             txt = (res.stdout or "") + "\n" + (res.stderr or "")
             lines = [ln for ln in txt.splitlines() if ln.strip()]
+            winget_items: List[Dict[str, Any]] = []
             for ln in lines:
                 if ln.lower().startswith("name ") or ln.startswith("-"):
                     continue
@@ -3069,7 +3519,7 @@ def get_installed_software(max_age_s: int = 21600) -> List[Dict[str, Any]]:
                     moniker = parts[2]
                 if len(parts) >= 4:
                     source = parts[3]
-                items.append(
+                winget_items.append(
                     {
                         "name": name[:80],
                         "version": version[:40],
@@ -3077,6 +3527,21 @@ def get_installed_software(max_age_s: int = 21600) -> List[Dict[str, Any]]:
                         "source": source[:40],
                     }
                 )
+            reg_items = _collect_windows_registry_sw(timeout_s=10)
+            feat_items = _collect_windows_optional_features(timeout_s=8)
+            items = _merge_sw_items(winget_items, reg_items + feat_items, max_items=1200)
+        except Exception:
+            items = []
+    elif sys.platform == "darwin":
+        try:
+            brew_items = _collect_macos_brew_sw(timeout_s=8)
+            items = _merge_sw_items([], brew_items, max_items=800)
+        except Exception:
+            items = []
+    else:
+        try:
+            linux_items = _collect_linux_pkg_sw(timeout_s=8)
+            items = _merge_sw_items([], linux_items, max_items=1200)
         except Exception:
             items = []
     prev = {}
@@ -3207,59 +3672,189 @@ def _build_software_tool_context(installed: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _collect_web_services_info() -> Dict[str, Any]:
+def _collect_web_services_info(installed: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    installed = installed or []
     if sys.platform == "win32":
         services = _collect_powershell_json(
-            "Get-Service -ErrorAction SilentlyContinue | "
-            "Where-Object { $_.Name -in @('W3SVC','Apache2.4','nginx','MySQL80','MariaDB','postgresql-x64-17','postgresql-x64-16','Redis','Memcached') } | "
-            "Select-Object Name, DisplayName, Status, StartType | ConvertTo-Json -Compress",
-            timeout_s=8,
+            "Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | "
+            "Where-Object { "
+            "$n=$_.Name; $d=$_.DisplayName; "
+            "($n -in @('W3SVC','WAS','IISADMIN','Apache2.4','nginx','MySQL80','MariaDB','Redis','Memcached','com.docker.service','dockerdesktopservice','docker','caddy')) "
+            "-or ($n -like 'Tomcat*') "
+            "-or ($d -match '(?i)IIS|Internet Information Services|Apache|Nginx|Tomcat|Docker|Caddy|LiteSpeed|Wamp|XAMPP|Laragon') "
+            "} | "
+            "Select-Object Name,DisplayName,@{n='Status';e={$_.State}},@{n='StartType';e={$_.StartMode}} | "
+            "ConvertTo-Json -Compress",
+            timeout_s=9,
         )
         processes = _collect_powershell_json(
             "Get-Process -ErrorAction SilentlyContinue | "
-            "Where-Object { $_.Name -in @('nginx','httpd','apache2','php','php-cgi','mysqld','mariadbd','postgres','redis-server','laragon') } | "
-            "Select-Object Name, Id, Path | ConvertTo-Json -Compress",
+            "Where-Object { $_.Name -match '^(nginx|httpd|apache2|php|php-cgi|mysqld|mariadbd|postgres|redis-server|laragon|dockerd|docker)$' } | "
+            "Select-Object Name,Id,Path | ConvertTo-Json -Compress",
             timeout_s=8,
         )
         ports = _collect_powershell_json(
             "Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | "
             "Where-Object { $_.LocalPort -in @(80,443,8000,8080,3000,5173,3306,5432,6379) } | "
-            "Select-Object LocalAddress, LocalPort, OwningProcess | ConvertTo-Json -Compress",
+            "Select-Object LocalAddress,LocalPort,OwningProcess | ConvertTo-Json -Compress",
             timeout_s=8,
         )
-        detected: List[str] = []
-        try:
-            if isinstance(services, dict):
-                services = [services]
-            if isinstance(services, list):
-                for s in services:
-                    if not isinstance(s, dict):
-                        continue
-                    name = str(s.get("Name") or "").strip().lower()
-                    if name == "w3svc":
-                        detected.append("IIS")
-                    if name in ["apache2.4", "nginx", "mysql80", "mariadb"]:
-                        detected.append(name)
-                    if name.startswith("postgresql"):
-                        detected.append("postgresql")
-            if isinstance(processes, dict):
-                processes = [processes]
-            if isinstance(processes, list):
-                for p in processes:
-                    if not isinstance(p, dict):
-                        continue
-                    nm = str(p.get("Name") or p.get("name") or "").strip().lower()
-                    path = str(p.get("Path") or p.get("path") or "").strip().lower()
-                    if "laragon" in nm or "laragon" in path:
-                        detected.append("Laragon")
-        except Exception:
-            pass
-        detected = sorted(set([x for x in detected if x]))
+        commands = _collect_powershell_json(
+            "Get-Command -ErrorAction SilentlyContinue docker,docker-compose,nginx,httpd,apache2,caddy,php,mariadb,mysql | "
+            "Select-Object Name,Source | ConvertTo-Json -Compress",
+            timeout_s=8,
+        )
+        dirs = _collect_powershell_json(
+            "@{"
+            "laragon=(Test-Path 'C:\\laragon');"
+            "xampp=(Test-Path 'C:\\xampp');"
+            "wamp64=(Test-Path 'C:\\wamp64');"
+            "wamp=(Test-Path 'C:\\wamp');"
+            "apache24=(Test-Path 'C:\\Apache24\\bin\\httpd.exe');"
+            "nginxDir=(Test-Path 'C:\\nginx');"
+            "iisAppCmd=(Test-Path 'C:\\Windows\\System32\\inetsrv\\appcmd.exe');"
+            "dockerDesktop=(Test-Path 'C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe');"
+            "} | ConvertTo-Json -Compress",
+            timeout_s=6,
+        )
+        iis_reg = _collect_powershell_json(
+            "if (Test-Path 'HKLM:\\Software\\Microsoft\\InetStp') { "
+            "Get-ItemProperty 'HKLM:\\Software\\Microsoft\\InetStp' "
+            "| Select-Object VersionString,InstallPath,MajorVersion,MinorVersion "
+            "| ConvertTo-Json -Compress "
+            "} else { $null }",
+            timeout_s=6,
+        )
+
+        def _flat_text(items2: List[Dict[str, Any]]) -> str:
+            parts = []
+            for it in items2 or []:
+                if not isinstance(it, dict):
+                    continue
+                parts.append(str(it.get("name") or ""))
+                parts.append(str(it.get("id") or ""))
+                parts.append(str(it.get("source") or ""))
+            return "\n".join(parts).lower()
+
+        installed_hay = _flat_text(installed)
+
+        def _has_installed(*tokens: str) -> bool:
+            return any(t and t.lower() in installed_hay for t in tokens)
+
+        def _cmd_names(obj: Any) -> List[str]:
+            rows: List[Dict[str, Any]] = []
+            if isinstance(obj, dict):
+                rows = [obj]
+            elif isinstance(obj, list):
+                rows = [x for x in obj if isinstance(x, dict)]
+            names = []
+            for r in rows:
+                nm = str(r.get("Name") or r.get("name") or "").strip().lower()
+                if nm:
+                    names.append(nm)
+            return sorted(set(names))
+
+        cmd_set = set(_cmd_names(commands))
+
+        def _svc_rows(obj: Any) -> List[Dict[str, Any]]:
+            if isinstance(obj, dict):
+                return [obj]
+            if isinstance(obj, list):
+                return [x for x in obj if isinstance(x, dict)]
+            return []
+
+        svc_rows = _svc_rows(services)
+        proc_rows = _svc_rows(processes)
+
+        def _any_service_name(*names: str) -> bool:
+            want = {str(n).lower() for n in names if n}
+            for r in svc_rows:
+                nm = str(r.get("Name") or "").strip().lower()
+                dn = str(r.get("DisplayName") or "").strip().lower()
+                if nm in want or dn in want:
+                    return True
+            return False
+
+        installed_detected: List[str] = []
+        running_detected: List[str] = []
+
+        is_iis = (
+            bool((dirs or {}).get("iisAppCmd"))
+            or bool(iis_reg)
+            or _any_service_name("w3svc", "was", "iisadmin")
+            or _has_installed("internet information services", "iis")
+        )
+        if is_iis:
+            installed_detected.append("IIS")
+
+        if bool((dirs or {}).get("laragon")) or _has_installed("laragon"):
+            installed_detected.append("Laragon")
+
+        if bool((dirs or {}).get("xampp")) or _has_installed("xampp"):
+            installed_detected.append("XAMPP")
+
+        if bool((dirs or {}).get("wamp64")) or bool((dirs or {}).get("wamp")) or _has_installed("wampserver", "wamp"):
+            installed_detected.append("WampServer")
+
+        if bool((dirs or {}).get("dockerDesktop")) or ("docker" in cmd_set) or _any_service_name("com.docker.service", "dockerdesktopservice") or _has_installed("docker desktop", "docker"):
+            installed_detected.append("Docker")
+
+        if ("docker-compose" in cmd_set) or _has_installed("docker compose", "docker-compose"):
+            installed_detected.append("Docker Compose")
+
+        if bool((dirs or {}).get("apache24")) or _any_service_name("apache2.4") or _has_installed("apache http server", "apachehaus", "httpd", "apache"):
+            installed_detected.append("Apache HTTP Server")
+
+        if bool((dirs or {}).get("nginxDir")) or ("nginx" in cmd_set) or _any_service_name("nginx") or _has_installed("nginx"):
+            installed_detected.append("Nginx")
+
+        if any(str(r.get("Name") or "").strip().lower().startswith("tomcat") for r in svc_rows) or _has_installed("tomcat"):
+            installed_detected.append("Tomcat")
+
+        if ("caddy" in cmd_set) or _any_service_name("caddy") or _has_installed("caddy"):
+            installed_detected.append("Caddy")
+
+        if _has_installed("litespeed", "openlitespeed"):
+            installed_detected.append("LiteSpeed")
+
+        if _has_installed("mariadb") or _any_service_name("mariadb"):
+            installed_detected.append("MariaDB")
+        if _has_installed("mysql") or _any_service_name("mysql80"):
+            installed_detected.append("MySQL")
+        if _has_installed("postgres") or any(str(r.get("Name") or "").lower().startswith("postgresql") for r in svc_rows):
+            installed_detected.append("PostgreSQL")
+
+        for r in svc_rows:
+            name = str(r.get("Name") or "").strip().lower()
+            status = str(r.get("Status") or r.get("status") or "").strip().lower()
+            if status not in {"running", "started"}:
+                continue
+            if name == "w3svc":
+                running_detected.append("IIS")
+            if name in {"apache2.4", "nginx", "mysql80", "mariadb", "redis"}:
+                running_detected.append(name)
+            if name.startswith("postgresql"):
+                running_detected.append("postgresql")
+
+        for p in proc_rows:
+            nm = str(p.get("Name") or p.get("name") or "").strip().lower()
+            path = str(p.get("Path") or p.get("path") or "").strip().lower()
+            if "laragon" in nm or "laragon" in path:
+                running_detected.append("Laragon")
+            if nm == "dockerd":
+                running_detected.append("Docker")
+
+        detected = sorted(set([*installed_detected, *running_detected]))
         return {
-            "services": services or [],
-            "processes": processes or [],
+            "services": svc_rows,
+            "processes": proc_rows,
             "listen_ports": ports or [],
+            "commands": commands or [],
+            "dirs": dirs or {},
+            "iis_registry": iis_reg or {},
             "detected": detected,
+            "installed_detected": sorted(set([x for x in installed_detected if x])),
+            "running_detected": sorted(set([x for x in running_detected if x])),
         }
 
     try:
@@ -3281,7 +3876,7 @@ def _collect_web_services_info() -> Dict[str, Any]:
             "command -v systemctl >/dev/null 2>&1 && systemctl list-units --type=service --all 2>/dev/null | egrep -i '(nginx|apache|httpd|php|mysql|mariadb|postgres|redis|caddy|traefik)' | head -n 120 || true",
             timeout_s=6,
         )
-        detected: List[str] = []
+        running_detected: List[str] = []
         hay = "\n".join([txt or "", processes_txt or "", services_txt or ""]).lower()
         for token in [
             "nginx",
@@ -3298,13 +3893,69 @@ def _collect_web_services_info() -> Dict[str, Any]:
             "traefik",
         ]:
             if token in hay:
-                detected.append(token)
-        detected = sorted(set([x for x in detected if x]))
+                running_detected.append(token)
+        running_detected = sorted(set([x for x in running_detected if x]))
+
+        installed_hay = "\n".join(
+            [
+                "\n".join(
+                    [
+                        str((it or {}).get("name") or ""),
+                        str((it or {}).get("id") or ""),
+                        str((it or {}).get("source") or ""),
+                    ]
+                )
+                for it in (installed or [])
+                if isinstance(it, dict)
+            ]
+        ).lower()
+
+        def _has_installed(*tokens: str) -> bool:
+            return any(t and t.lower() in installed_hay for t in tokens)
+
+        installed_detected: List[str] = []
+        if _has_installed("docker"):
+            installed_detected.append("docker")
+        if _has_installed("docker-compose", "docker compose"):
+            installed_detected.append("docker-compose")
+        if _has_installed("nginx"):
+            installed_detected.append("nginx")
+        if _has_installed("apache2", "httpd", "apache"):
+            installed_detected.append("apache")
+        if _has_installed("tomcat"):
+            installed_detected.append("tomcat")
+        if _has_installed("caddy"):
+            installed_detected.append("caddy")
+        if _has_installed("litespeed", "openlitespeed"):
+            installed_detected.append("litespeed")
+        if _has_installed("servbay"):
+            installed_detected.append("servbay")
+        if _has_installed("xampp"):
+            installed_detected.append("xampp")
+        if _has_installed("mysql"):
+            installed_detected.append("mysql")
+        if _has_installed("mariadb"):
+            installed_detected.append("mariadb")
+        if _has_installed("postgres"):
+            installed_detected.append("postgres")
+
+        if sys.platform == "darwin":
+            docker_app = _run_bash_text("test -d '/Applications/Docker.app' && echo yes || true", timeout_s=3).strip()
+            servbay_app = _run_bash_text("test -d '/Applications/ServBay.app' && echo yes || true", timeout_s=3).strip()
+            if docker_app:
+                installed_detected.append("docker")
+            if servbay_app:
+                installed_detected.append("servbay")
+
+        installed_detected = sorted(set([x for x in installed_detected if x]))
+        detected = sorted(set([*installed_detected, *running_detected]))
         return {
             "listen_summary": txt,
             "processes_summary": processes_txt,
             "services_summary": services_txt,
             "detected": detected,
+            "installed_detected": installed_detected,
+            "running_detected": running_detected,
         }
     except Exception:
         return {}
@@ -3475,8 +4126,8 @@ def _build_system_profile(user_id: int) -> Dict[str, Any]:
     mac_sw_small = _shrink_macos_system_profiler(mac_sw)
     mac_diskutil_small = _shrink_macos_diskutil(mac_diskutil)
     linux_lsblk_small = _shrink_linux_lsblk(linux_lsblk)
-    web_services = _collect_web_services_info()
     installed = get_installed_software()
+    web_services = _collect_web_services_info(installed)
     top_prod = _top20_productivity(installed)
     removed = list(_installed_removed)
 
@@ -3591,14 +4242,15 @@ def _build_system_profile(user_id: int) -> Dict[str, Any]:
         ).strip()
     if web_services:
         svc_lines: List[str] = ["## Serviços web locais"]
-        if (
-            isinstance(web_services, dict)
-            and isinstance(web_services.get("detected"), list)
-            and web_services.get("detected")
-        ):
+        if isinstance(web_services, dict) and isinstance(web_services.get("installed_detected"), list) and web_services.get("installed_detected"):
             svc_lines.append(
-                "- Detectado: "
-                + ", ".join([str(x) for x in web_services.get("detected") if x])
+                "- Instalado: "
+                + ", ".join([str(x) for x in web_services.get("installed_detected") if x])
+            )
+        if isinstance(web_services, dict) and isinstance(web_services.get("running_detected"), list) and web_services.get("running_detected"):
+            svc_lines.append(
+                "- Em execução: "
+                + ", ".join([str(x) for x in web_services.get("running_detected") if x])
             )
         if isinstance(web_services, dict) and isinstance(
             web_services.get("services"), list
@@ -3926,126 +4578,16 @@ def _system_profile_direct_answer(
     return "\n".join([line for line in lines if line]).strip()
 
 
-_DPAPI_ENTROPY = b"OpenSlapApiKey-v1"
+def _get_user_api_key(user_id: int, provider: Optional[str] = None) -> Optional[str]:
+    prov = str(provider or "").strip().lower()
+    if prov:
+        ct2 = get_active_user_llm_provider_key_ciphertext(int(user_id), prov)
+        if ct2:
+            raw2 = _dpapi_unprotect_text(ct2) or ""
+            key2 = _sanitize_api_key(raw2)
+            if key2:
+                return key2
 
-
-class _DataBlob(ctypes.Structure):
-    _fields_ = [
-        ("cbData", ctypes.c_uint32),
-        ("pbData", ctypes.POINTER(ctypes.c_byte)),
-    ]
-
-
-def _bytes_to_blob(data: bytes) -> _DataBlob:
-    buf = ctypes.create_string_buffer(data)
-    return _DataBlob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_byte)))
-
-
-def _blob_to_bytes(blob: _DataBlob) -> bytes:
-    if not blob.pbData:
-        return b""
-    return ctypes.string_at(blob.pbData, blob.cbData)
-
-
-def _dpapi_protect_text(value: str) -> str:
-    if sys.platform != "win32":
-        raise HTTPException(
-            status_code=400,
-            detail="Armazenamento seguro de chave só está disponível no Windows.",
-        )
-    plaintext = (value or "").encode("utf-8")
-    if not plaintext:
-        raise HTTPException(status_code=400, detail="Chave vazia.")
-
-    in_blob = _bytes_to_blob(plaintext)
-    entropy_blob = _bytes_to_blob(_DPAPI_ENTROPY)
-    out_blob = _DataBlob()
-
-    ok = ctypes.windll.crypt32.CryptProtectData(
-        ctypes.byref(in_blob),
-        None,
-        ctypes.byref(entropy_blob),
-        None,
-        None,
-        0,
-        ctypes.byref(out_blob),
-    )
-    if not ok:
-        raise HTTPException(
-            status_code=500, detail="Falha ao proteger a chave (DPAPI)."
-        )
-
-    try:
-        protected = _blob_to_bytes(out_blob)
-    finally:
-        if out_blob.pbData:
-            ctypes.windll.kernel32.LocalFree(out_blob.pbData)
-
-    return base64.b64encode(protected).decode("ascii")
-
-
-def _dpapi_unprotect_text(ciphertext_b64: str) -> Optional[str]:
-    if sys.platform != "win32":
-        return None
-    raw = (ciphertext_b64 or "").strip()
-    if not raw:
-        return None
-    try:
-        protected = base64.b64decode(raw.encode("ascii"), validate=False)
-    except Exception:
-        return None
-
-    in_blob = _bytes_to_blob(protected)
-    entropy_blob = _bytes_to_blob(_DPAPI_ENTROPY)
-    out_blob = _DataBlob()
-
-    ok = ctypes.windll.crypt32.CryptUnprotectData(
-        ctypes.byref(in_blob),
-        None,
-        ctypes.byref(entropy_blob),
-        None,
-        None,
-        0,
-        ctypes.byref(out_blob),
-    )
-    if not ok:
-        return None
-
-    try:
-        plaintext = _blob_to_bytes(out_blob)
-    finally:
-        if out_blob.pbData:
-            ctypes.windll.kernel32.LocalFree(out_blob.pbData)
-
-    try:
-        return plaintext.decode("utf-8")
-    except Exception:
-        return None
-
-
-def _sanitize_api_key(v: str) -> str:
-    s = str(v or "").strip()
-    if (
-        (s.startswith("`") and s.endswith("`"))
-        or (s.startswith('"') and s.endswith('"'))
-        or (s.startswith("'") and s.endswith("'"))
-    ):
-        s = s[1:-1].strip()
-    s = s.strip()
-    if s.lower().startswith("authorization:"):
-        s = s.split(":", 1)[-1].strip()
-    if s.lower().startswith("bearer "):
-        s = s.split(None, 1)[-1].strip()
-    if "," in s:
-        parts = [p.strip() for p in s.split(",") if p.strip()]
-        if parts:
-            s = parts[0]
-    s = s.strip(" ,")
-    s = "".join(s.split())
-    return s
-
-
-def _get_user_api_key(user_id: int) -> Optional[str]:
     ct = get_user_api_key_ciphertext(int(user_id))
     if not ct:
         return None
@@ -4095,36 +4637,6 @@ def _infer_env_provider() -> Optional[str]:
         if _get_env_api_key_for_provider(p):
             return p
     return None
-
-
-def _get_user_connector_secret(user_id: int, connector_key: str) -> Optional[str]:
-    ct = get_user_connector_secret_ciphertext(
-        int(user_id), str(connector_key or "").strip()
-    )
-    if not ct:
-        return None
-    raw = _dpapi_unprotect_text(ct) or ""
-    secret = _sanitize_api_key(raw)
-    return secret or None
-
-
-def _get_user_connector_secret_raw(user_id: int, connector_key: str) -> Optional[str]:
-    ct = get_user_connector_secret_ciphertext(
-        int(user_id), str(connector_key or "").strip()
-    )
-    if not ct:
-        return None
-    raw = (_dpapi_unprotect_text(ct) or "").strip()
-    return raw or None
-
-
-def _ensure_connectors_allowed(user_id: int) -> None:
-    sec = _get_effective_security_settings(int(user_id))
-    if sec.get("sandbox") or not sec.get("allow_connectors"):
-        raise HTTPException(
-            status_code=403, detail="Conectores desabilitados nas permissões."
-        )
-
 
 def _is_allowed_write_root(base_path: str) -> bool:
     base_abs = os.path.abspath(base_path or "")
@@ -5138,223 +5650,10 @@ async def forge_harnesses(credentials: HTTPAuthorizationCredentials = Depends(se
     return {"harnesses": discover_harnesses()}
 
 
-# Endpoints de Conversas
-@app.get("/api/conversations")
-async def list_conversations(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    kind: Optional[str] = Query("conversation"),
-    source: Optional[str] = Query(None),
-):
-    """Lista conversas do usuário"""
-    token = credentials.credentials
-    current_user = get_current_user(token)
-
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-
-    kind_norm = str(kind or "").strip().lower()
-    kind_filter: Optional[str] = None
-    if kind_norm in ("", "all", "*", "any", "both"):
-        kind_filter = None
-    elif kind_norm in ("conversation", "task"):
-        kind_filter = kind_norm
-    else:
-        kind_filter = "conversation"
-
-    source_norm = str(source or "").strip().lower()
-    source_filter: Optional[str] = None
-    if source_norm and source_norm not in ("all", "*", "any"):
-        source_filter = source_norm
-
-    conversations = get_user_conversations(
-        current_user["id"], kind=kind_filter, source=source_filter
-    )
-    return {"conversations": conversations}
-
-
-@app.post("/api/conversations")
-async def create_conversation_endpoint(
-    conversation: ConversationCreate,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    kind: Optional[str] = Query("conversation"),
-):
-    """Cria nova conversa"""
-    token = credentials.credentials
-    current_user = get_current_user(token)
-
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-
-    kind_to_save = (kind or "conversation").strip().lower()
-    if kind_to_save not in ("conversation", "task"):
-        kind_to_save = "conversation"
-
-    title = (conversation.title or "").strip()
-    if not title:
-        raise HTTPException(status_code=400, detail="Título vazio")
-
-    session_id = str(uuid.uuid4())
-    conversation_id = create_conversation(
-        current_user["id"], session_id, title, kind=kind_to_save
-    )
-
-    return {
-        "conversation_id": conversation_id,
-        "session_id": session_id,
-        "title": conversation.title,
-    }
-
-
-@app.put("/api/conversations/{conversation_id}/title")
-async def rename_conversation_endpoint(
-    conversation_id: int,
-    payload: TitleUpdate,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    ok = update_conversation_title(conversation_id, current_user["id"], payload.title)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Conversa não encontrada")
-    return {"ok": True}
-
-
-@app.get("/api/tasks")
-async def list_tasks_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    tasks = get_user_conversations(current_user["id"], kind="task")
-    return {"tasks": tasks}
-
-
-@app.post("/api/tasks")
-async def create_task_endpoint(
-    task: ConversationCreate,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    title = (task.title or "").strip()
-    if not title:
-        raise HTTPException(status_code=400, detail="Título vazio")
-    session_id = str(uuid.uuid4())
-    task_id = create_conversation(current_user["id"], session_id, title, kind="task")
-    return {"task_id": task_id, "session_id": session_id, "title": title}
-
-
-@app.put("/api/tasks/{task_id}/title")
-async def rename_task_endpoint(
-    task_id: int,
-    payload: TitleUpdate,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    ok = update_conversation_title(task_id, current_user["id"], payload.title)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
-    return {"ok": True}
-
-
-@app.get("/api/tasks/{task_id}/todos")
-async def list_task_todos_endpoint(
-    task_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    status: Optional[str] = Query(None),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    todos = list_task_todos(current_user["id"], task_id, status=status)
-    return {"todos": todos}
-
-
-@app.post("/api/tasks/{task_id}/todos")
-async def add_task_todo_endpoint(
-    task_id: int,
-    payload: TodoCreate,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    todo_id = add_task_todo(
-        current_user["id"],
-        task_id,
-        payload.text,
-        parent_todo_id=payload.parent_todo_id,
-        delivery_path=payload.delivery_path,
-        artifact_meta=payload.artifact_meta,
-    )
-    return {"todo_id": todo_id}
-
-
-@app.get("/api/tasks/todos")
-async def list_global_todos_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    todos = list_pending_todos(current_user["id"])
-    return {"todos": todos}
-
-
-@app.put("/api/tasks/todos/{todo_id}")
-async def update_task_todo_endpoint(
-    todo_id: int,
-    payload: TodoUpdate,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    ok = update_task_todo(
-        current_user["id"],
-        todo_id,
-        text=payload.text,
-        status=payload.status,
-        parent_todo_id=payload.parent_todo_id,
-        delivery_path=payload.delivery_path,
-        artifact_meta=payload.artifact_meta,
-    )
-    if not ok:
-        raise HTTPException(status_code=404, detail="TODO não encontrado")
-    return {"ok": True}
-
-
-@app.get("/api/tasks/todos/{todo_id}/artifacts")
-async def get_todo_artifacts_endpoint(
-    todo_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    td = get_task_todo(current_user["id"], int(todo_id))
-    if not td:
-        raise HTTPException(status_code=404, detail="TODO não encontrado")
-    meta = td.get("artifact_meta")
-    if isinstance(meta, dict) and isinstance(meta.get("artifacts"), list):
-        return {"artifacts": meta.get("artifacts") or []}
-    if isinstance(meta, list):
-        return {"artifacts": meta}
-    return {"artifacts": []}
+app.include_router(conversations_tasks_router)
+app.include_router(settings_router)
+app.include_router(autoapprove_router)
+app.include_router(meta_router)
 
 
 @app.get("/api/search/messages")
@@ -5451,371 +5750,7 @@ def _require_mcp_secret(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Não autorizado")
 
 
-@app.put("/api/connectors/github")
-async def put_github_connector_endpoint(
-    payload: GitHubConnectInput,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    cleaned = _sanitize_api_key(payload.token)
-    ciphertext = _dpapi_protect_text(cleaned)
-    upsert_user_connector_secret_ciphertext(current_user["id"], "github", ciphertext)
-    return {"ok": True}
-
-
-@app.delete("/api/connectors/github")
-async def delete_github_connector_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    ok = delete_user_connector_secret(current_user["id"], "github")
-    return {"ok": bool(ok)}
-
-
-@app.post("/api/connectors/github/test")
-async def test_github_connector_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    gh_token = _get_user_connector_secret(current_user["id"], "github")
-    if not gh_token:
-        raise HTTPException(status_code=400, detail="Conector GitHub não configurado.")
-
-    headers = {
-        "Authorization": f"token {gh_token}",
-        "Accept": "application/vnd.github+json",
-    }
-    timeout = aiohttp.ClientTimeout(total=8)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get("https://api.github.com/user", headers=headers) as resp:
-            data = await resp.json(content_type=None)
-            if resp.status >= 400:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Falha ao validar token do GitHub (HTTP {resp.status}).",
-                )
-            login = (data or {}).get("login")
-            return {"ok": True, "user": {"login": login, "id": (data or {}).get("id")}}
-
-
-def _google_bearer_headers(access_token: str) -> Dict[str, str]:
-    return {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
-
-
-async def _google_test_get(url: str, access_token: str) -> Dict[str, Any]:
-    timeout = aiohttp.ClientTimeout(total=8)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(
-            url, headers=_google_bearer_headers(access_token)
-        ) as resp:
-            data = await resp.json(content_type=None)
-            if resp.status >= 400:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Falha ao validar credencial (HTTP {resp.status}).",
-                )
-            return data or {}
-
-
-@app.put("/api/connectors/google_drive")
-async def put_google_drive_connector_endpoint(
-    payload: TokenConnectInput,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    cleaned = _sanitize_api_key(payload.token)
-    ciphertext = _dpapi_protect_text(cleaned)
-    upsert_user_connector_secret_ciphertext(
-        current_user["id"], "google_drive", ciphertext
-    )
-    return {"ok": True}
-
-
-@app.delete("/api/connectors/google_drive")
-async def delete_google_drive_connector_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    ok = delete_user_connector_secret(current_user["id"], "google_drive")
-    return {"ok": bool(ok)}
-
-
-@app.post("/api/connectors/google_drive/test")
-async def test_google_drive_connector_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    access_token = _get_user_connector_secret(current_user["id"], "google_drive")
-    if not access_token:
-        raise HTTPException(
-            status_code=400, detail="Conector Google Drive não configurado."
-        )
-    data = await _google_test_get(
-        "https://www.googleapis.com/drive/v3/about?fields=user",
-        access_token,
-    )
-    return {"ok": True, "drive": {"user": (data or {}).get("user")}}
-
-
-@app.put("/api/connectors/google_calendar")
-async def put_google_calendar_connector_endpoint(
-    payload: TokenConnectInput,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    cleaned = _sanitize_api_key(payload.token)
-    ciphertext = _dpapi_protect_text(cleaned)
-    upsert_user_connector_secret_ciphertext(
-        current_user["id"], "google_calendar", ciphertext
-    )
-    return {"ok": True}
-
-
-@app.delete("/api/connectors/google_calendar")
-async def delete_google_calendar_connector_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    ok = delete_user_connector_secret(current_user["id"], "google_calendar")
-    return {"ok": bool(ok)}
-
-
-@app.post("/api/connectors/google_calendar/test")
-async def test_google_calendar_connector_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    access_token = _get_user_connector_secret(current_user["id"], "google_calendar")
-    if not access_token:
-        raise HTTPException(
-            status_code=400, detail="Conector Google Calendar não configurado."
-        )
-    data = await _google_test_get(
-        "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=1",
-        access_token,
-    )
-    items = (data or {}).get("items") if isinstance(data, dict) else None
-    first = items[0] if isinstance(items, list) and items else None
-    return {"ok": True, "calendar": {"sample": first}}
-
-
-@app.put("/api/connectors/gmail")
-async def put_gmail_connector_endpoint(
-    payload: TokenConnectInput,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    cleaned = _sanitize_api_key(payload.token)
-    ciphertext = _dpapi_protect_text(cleaned)
-    upsert_user_connector_secret_ciphertext(current_user["id"], "gmail", ciphertext)
-    return {"ok": True}
-
-
-@app.delete("/api/connectors/gmail")
-async def delete_gmail_connector_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    ok = delete_user_connector_secret(current_user["id"], "gmail")
-    return {"ok": bool(ok)}
-
-
-@app.post("/api/connectors/gmail/test")
-async def test_gmail_connector_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    access_token = _get_user_connector_secret(current_user["id"], "gmail")
-    if not access_token:
-        raise HTTPException(status_code=400, detail="Conector Gmail não configurado.")
-    data = await _google_test_get(
-        "https://gmail.googleapis.com/gmail/v1/users/me/profile",
-        access_token,
-    )
-    email = (data or {}).get("emailAddress")
-    return {"ok": True, "gmail": {"email": email}}
-
-
-@app.put("/api/connectors/tera")
-async def put_tera_connector_endpoint(
-    payload: TokenConnectInput,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    cleaned = _sanitize_api_key(payload.token)
-    ciphertext = _dpapi_protect_text(cleaned)
-    upsert_user_connector_secret_ciphertext(current_user["id"], "tera", ciphertext)
-    return {"ok": True}
-
-
-@app.delete("/api/connectors/tera")
-async def delete_tera_connector_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    ok = delete_user_connector_secret(current_user["id"], "tera")
-    return {"ok": bool(ok)}
-
-
-@app.post("/api/connectors/tera/test")
-async def test_tera_connector_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    value = _get_user_connector_secret(current_user["id"], "tera")
-    if not value:
-        raise HTTPException(status_code=400, detail="Conector Tera não configurado.")
-    return {"ok": True}
-
-
-@app.put("/api/connectors/telegram")
-async def put_telegram_connector_endpoint(
-    payload: TokenConnectInput,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    cleaned = _sanitize_api_key(payload.token)
-    ciphertext = _dpapi_protect_text(cleaned)
-    upsert_user_connector_secret_ciphertext(current_user["id"], "telegram", ciphertext)
-    return {"ok": True}
-
-
-@app.delete("/api/connectors/telegram")
-async def delete_telegram_connector_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    ok = delete_user_connector_secret(current_user["id"], "telegram")
-    return {"ok": bool(ok)}
-
-
-@app.post("/api/connectors/telegram/test")
-async def test_telegram_connector_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    tg_token = _get_user_connector_secret(current_user["id"], "telegram")
-    if not tg_token:
-        raise HTTPException(
-            status_code=400, detail="Conector Telegram não configurado."
-        )
-    url = f"https://api.telegram.org/bot{tg_token}/getMe"
-    timeout = aiohttp.ClientTimeout(total=8)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(url) as resp:
-            data = await resp.json(content_type=None)
-            if resp.status >= 400 or not (data or {}).get("ok"):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Falha ao validar token do Telegram (HTTP {resp.status}).",
-                )
-            result = (data or {}).get("result") or {}
-            return {
-                "ok": True,
-                "bot": {
-                    "id": result.get("id"),
-                    "username": result.get("username"),
-                    "first_name": result.get("first_name"),
-                },
-            }
-
-
-@app.post("/api/connectors/telegram/link-code")
-async def create_telegram_link_code_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    created = create_telegram_link_code(int(current_user["id"]), ttl_seconds=600)
-    return {"code": created.get("code"), "expires_at": created.get("expires_at")}
-
-
-@app.get("/api/connectors/telegram/links")
-async def list_telegram_links_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    links = list_telegram_links(int(current_user["id"]))
-    return {"links": links}
+app.include_router(connectors_settings_router)
 
 
 @app.post("/connectors/telegram/link")
@@ -5949,303 +5884,7 @@ async def mcp_telegram_inbound_endpoint(
     return {"ok": True, "reply": persisted_response}
 
 
-@app.get("/api/automation_client")
-async def get_automation_client_settings(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    raw = (
-        _get_user_connector_secret_raw(int(current_user["id"]), "automation_client")
-        or ""
-    )
-    obj: Dict[str, Any] = {}
-    try:
-        obj = json.loads(raw) if raw else {}
-    except Exception:
-        obj = {}
-    base_url = str(obj.get("base_url") or "").strip()
-    has_key = bool(str(obj.get("api_key") or "").strip())
-    return {"settings": {"base_url": base_url}, "has_api_key": has_key}
-
-
-@app.put("/api/automation_client")
-async def put_automation_client_settings(
-    payload: AutomationClientSettingsInput,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    base_url = str(payload.base_url or "").strip().strip("`\"' ,").rstrip("/")
-    api_key = str(payload.api_key or "").strip()
-    if not base_url:
-        raise HTTPException(status_code=400, detail="base_url obrigatório.")
-    if not (base_url.startswith("http://") or base_url.startswith("https://")):
-        raise HTTPException(status_code=400, detail="base_url inválido (http/https).")
-    existing_key = ""
-    raw = (
-        _get_user_connector_secret_raw(int(current_user["id"]), "automation_client")
-        or ""
-    )
-    try:
-        obj_prev = json.loads(raw) if raw else {}
-    except Exception:
-        obj_prev = {}
-    existing_key = str((obj_prev or {}).get("api_key") or "").strip()
-    if not api_key:
-        api_key = existing_key
-    if not api_key:
-        raise HTTPException(status_code=400, detail="api_key obrigatório.")
-    obj = {"base_url": base_url, "api_key": api_key}
-    ciphertext = _dpapi_protect_text(json.dumps(obj, ensure_ascii=False))
-    upsert_user_connector_secret_ciphertext(
-        int(current_user["id"]), "automation_client", ciphertext
-    )
-    return {"ok": True, "settings": {"base_url": base_url}, "has_api_key": True}
-
-
-@app.delete("/api/automation_client")
-async def delete_automation_client_settings(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    ok = delete_user_connector_secret(int(current_user["id"]), "automation_client")
-    return {"deleted": bool(ok), "has_api_key": False}
-
-
-@app.post("/api/automation_client/test")
-async def test_automation_client_settings(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    _ensure_connectors_allowed(int(current_user["id"]))
-    raw = (
-        _get_user_connector_secret_raw(int(current_user["id"]), "automation_client")
-        or ""
-    )
-    try:
-        obj = json.loads(raw) if raw else {}
-    except Exception:
-        obj = {}
-    base_url = str((obj or {}).get("base_url") or "").strip().rstrip("/")
-    api_key = str((obj or {}).get("api_key") or "").strip()
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Cliente externo não configurado.")
-    timeout = aiohttp.ClientTimeout(total=4)
-    headers = {"Authorization": f"Bearer {api_key}"}
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(f"{base_url}/health", headers=headers) as resp:
-                return {"ok": resp.status < 500, "status": resp.status}
-    except Exception:
-        return {"ok": False, "status": None}
-
-
-@app.get("/api/conversations/{conversation_id}")
-async def get_conversation(
-    conversation_id: int, credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    """Obtém mensagens de uma conversa"""
-    token = credentials.credentials
-    current_user = get_current_user(token)
-
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-
-    messages = get_conversation_messages(conversation_id)
-    return {"messages": messages}
-
-
-@app.delete("/api/conversations/{conversation_id}")
-async def delete_conversation_endpoint(
-    conversation_id: int, credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    """Deleta uma conversa"""
-    token = credentials.credentials
-    current_user = get_current_user(token)
-
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-
-    success = delete_conversation(conversation_id, current_user["id"])
-
-    if not success:
-        raise HTTPException(status_code=404, detail="Conversa não encontrada")
-
-    return {"message": "Conversa deletada com sucesso"}
-
-
-@app.get("/api/settings/llm")
-async def get_llm_settings_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    stored = get_user_llm_settings(current_user["id"])
-    raw_settings = (stored or {}).get("settings") or {}
-    settings = _safe_llm_settings(raw_settings)
-    llm_mode = str(settings.get("mode") or "env").strip().lower()
-    provider = str(settings.get("provider") or "").strip().lower()
-    effective_provider = provider
-    if llm_mode == "api" and not effective_provider:
-        effective_provider = "openai"
-    has_stored_key = bool(get_user_api_key_ciphertext(current_user["id"]))
-    env_provider = _infer_env_provider()
-    has_env_key = bool(_get_env_api_key_for_provider(effective_provider or env_provider))
-    has_key = bool(has_stored_key or has_env_key)
-    key_source = "stored" if has_stored_key else ("env" if has_env_key else "none")
-
-    # If no stored settings/provider and we have env keys, reflect effective provider/mode in the returned settings
-    if not raw_settings or not provider:
-        if env_provider:
-            settings = _safe_llm_settings(
-                {
-                    "mode": "api",
-                    "provider": env_provider,
-                    "model": raw_settings.get("model"),
-                    "base_url": raw_settings.get("base_url"),
-                }
-            )
-    return {
-        "settings": settings,
-        "has_api_key": has_key,
-        "api_key_source": key_source,
-        "has_stored_api_key": bool(has_stored_key),
-        "has_env_api_key": bool(has_env_key),
-        "updated_at": (stored or {}).get("updated_at"),
-    }
-
-
-@app.put("/api/settings/llm")
-async def put_llm_settings_endpoint(
-    payload: LlmSettingsInput,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    settings = _safe_llm_settings(payload.model_dump())
-    upsert_user_llm_settings(current_user["id"], settings)
-    if payload.api_key and payload.api_key.strip():
-        cleaned = _sanitize_api_key(payload.api_key)
-        ciphertext = _dpapi_protect_text(cleaned)
-        upsert_user_api_key_ciphertext(current_user["id"], ciphertext)
-    return {
-        "settings": settings,
-        "has_api_key": bool(get_user_api_key_ciphertext(current_user["id"])),
-    }
-
-
-@app.delete("/api/settings/llm/api_key")
-async def delete_llm_api_key_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    deleted = delete_user_api_key(current_user["id"])
-    stored = get_user_llm_settings(current_user["id"])
-    settings = _safe_llm_settings((stored or {}).get("settings") or {})
-    llm_mode = str(settings.get("mode") or "env").strip().lower()
-    provider = str(settings.get("provider") or "").strip().lower()
-    effective_provider = provider
-    if llm_mode == "api" and not effective_provider:
-        effective_provider = "openai"
-    has_stored_key = bool(get_user_api_key_ciphertext(current_user["id"]))
-    has_env_key = bool(_get_env_api_key_for_provider(effective_provider))
-    has_key = bool(has_stored_key or has_env_key)
-    key_source = "stored" if has_stored_key else ("env" if has_env_key else "none")
-    return {
-        "deleted": bool(deleted),
-        "has_api_key": has_key,
-        "api_key_source": key_source,
-        "has_stored_api_key": bool(has_stored_key),
-        "has_env_api_key": bool(has_env_key),
-    }
-
-
-@app.get("/api/settings/security")
-async def get_security_settings_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    effective = _get_effective_security_settings(int(current_user["id"]))
-    settings = {k: effective.get(k) for k in SECURITY_SETTINGS_DEFAULT.keys()}
-    return {
-        "settings": settings,
-        "updated_at": effective.get("updated_at"),
-    }
-
-
-@app.put("/api/settings/security")
-async def put_security_settings_endpoint(
-    payload: SecuritySettingsInput,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    prev = _get_effective_security_settings(int(current_user["id"]))
-    merged = {k: prev.get(k) for k in SECURITY_SETTINGS_DEFAULT.keys()}
-    for k, v in (payload.model_dump() or {}).items():
-        if k in SECURITY_SETTINGS_DEFAULT and v is not None:
-            merged[k] = bool(v)
-    settings = _safe_security_settings(merged)
-    upsert_user_security_settings(int(current_user["id"]), settings)
-    return {"settings": settings}
-
-
-@app.get("/api/settings/language")
-async def get_language_settings_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    stored = get_user_system_profile(current_user["id"]) or {}
-    data = stored.get("data") if isinstance(stored.get("data"), dict) else {}
-    lang = str((data or {}).get("lang") or "pt").strip().lower()
-    if lang not in ("pt", "en", "es", "ar", "zh"):
-        lang = "pt"
-    return {"lang": lang}
-
-
-@app.put("/api/settings/language")
-async def put_language_settings_endpoint(
-    payload: LanguageSettingsInput,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    lang = str(payload.lang or "").strip().lower()
-    if lang not in ("pt", "en", "es", "ar", "zh"):
-        raise HTTPException(status_code=400, detail="Idioma inválido.")
-    update_user_system_profile_data(current_user["id"], {"lang": lang})
-    return {"ok": True, "lang": lang}
+ 
 
 
 @app.get("/api/system_profile")
@@ -6910,16 +6549,40 @@ async def _run_orchestration(
                 except Exception:
                     pass
                 sec = _get_effective_security_settings(int(user_id))
-                full_response = await _run_external_software_skill(
-                    command_text=full_response,
-                    user_id=int(user_id),
-                    conversation_id=int(sub_conv_id),
-                    sec=sec,
-                    expert=expert,
-                    llm_override=user_llm_override,
-                    user_context=user_context,
-                    websocket=websocket,
-                )
+                try:
+                    full_response = await _run_external_software_skill(
+                        command_text=full_response,
+                        user_id=int(user_id),
+                        conversation_id=int(sub_conv_id),
+                        sec=sec,
+                        expert=expert,
+                        llm_override=user_llm_override,
+                        user_context=user_context,
+                        websocket=websocket,
+                    )
+                except Exception as e:
+                    try:
+                        import traceback as _tb
+
+                        tb_txt = _tb.format_exc()
+                    except Exception:
+                        tb_txt = ""
+                    msg = f"software_operator error: {type(e).__name__}: {str(e).strip() or repr(e)}"
+                    _log(task_id, "error", msg)
+                    try:
+                        save_message(
+                            sub_conv_id,
+                            "assistant",
+                            (msg + ("\n\n" + tb_txt[:1200] if tb_txt else "")),
+                            expert_id=expert.get("id"),
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        update_plan_task_status(task_id, "skipped", conversation_id=sub_conv_id)
+                    except Exception:
+                        pass
+                    continue
 
             # 9. Save assistant response
             if full_response.strip():
@@ -7032,7 +6695,7 @@ async def start_orchestration(
     # Resolve LLM settings for this user
     stored_llm = get_user_llm_settings(user["id"])
     llm_override = _safe_llm_settings((stored_llm or {}).get("settings") or {})
-    api_key = _get_user_api_key(user["id"])
+    api_key = _get_user_api_key(user["id"], llm_override.get("provider"))
     if api_key:
         llm_override["api_key"] = api_key
 
@@ -7103,7 +6766,8 @@ class ProjectCreateInput(BaseModel):
 
 
 class ProjectUpdateInput(BaseModel):
-    context_md: str
+    name: Optional[str] = None
+    context_md: Optional[str] = None
 
 
 @app.get("/api/projects")
@@ -7127,8 +6791,14 @@ async def create_project_endpoint(
     name = (payload.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
-    pid = create_project(user["id"], name, payload.context_md or "")
-    return {"ok": True, "project_id": pid}
+    try:
+        pid = create_project(user["id"], name, payload.context_md or "")
+        return {"ok": True, "project_id": pid}
+    except Exception as e:
+        logger.exception("create_project_failed user_id=%s", str(user.get("id")))
+        debug = (os.getenv("OPENSLAP_DEBUG_ERRORS") or "").strip().lower() in {"1", "true", "yes", "on"}
+        detail = str(e) if debug else "Internal Server Error"
+        raise HTTPException(status_code=500, detail=detail)
 
 
 @app.put("/api/projects/{project_id}")
@@ -7143,24 +6813,31 @@ async def update_project_endpoint(
     proj = get_project(project_id, user["id"])
     if not proj:
         raise HTTPException(status_code=404, detail="Project not found")
-    update_project_context(project_id, user["id"], payload.context_md or "")
+    name = payload.name if isinstance(payload.name, str) else None
+    context_md = payload.context_md if isinstance(payload.context_md, str) else None
+    if name is None and context_md is None:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    if name is not None:
+        clean_name = name.strip()
+        if not clean_name:
+            raise HTTPException(status_code=400, detail="name is required")
+        update_project_name(project_id, user["id"], clean_name)
+    if context_md is not None:
+        update_project_context(project_id, user["id"], context_md)
     return {"ok": True}
 
 
-class ConversationProjectInput(BaseModel):
-    project_id: Optional[int] = None
-
-
-@app.put("/api/conversations/{conversation_id}/project")
-async def set_conversation_project_endpoint(
-    conversation_id: int,
-    payload: ConversationProjectInput,
+@app.delete("/api/projects/{project_id}")
+async def delete_project_endpoint(
+    project_id: int,
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     user = get_current_user(credentials.credentials)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    set_conversation_project(conversation_id, payload.project_id)
+    ok = delete_project(project_id, user["id"])
+    if not ok:
+        raise HTTPException(status_code=404, detail="Project not found")
     return {"ok": True}
 
 
@@ -7191,6 +6868,394 @@ async def get_memory_snapshot(
     snapshot = get_consolidated_memory_snapshot(user["id"])
     return {"snapshot": snapshot}
 
+@app.api_route("/api/memory/dream", methods=["POST", "GET"])
+async def run_memory_dream(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    user = get_current_user(credentials.credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    decayed = decay_memory(user["id"])
+    pruned = prune_low_salience_memories(user["id"])
+    snapshot = get_consolidated_memory_snapshot(user["id"])
+    return {"ok": True, "decayed": decayed, "pruned": pruned, "snapshot": snapshot}
+@app.get("/api/memory/search_raw")
+async def search_raw_memory(
+    q: str,
+    limit: int = 50,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    user = get_current_user(credentials.credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    query = (q or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="q is required")
+    lim = max(1, min(int(limit or 50), 200))
+    results = search_user_messages(user["id"], query, limit=lim, kind=None)
+    return {"results": results}
+
+
+class MemoryImportPayload(BaseModel):
+    markdown: str = ""
+    provider: Optional[str] = None
+    label: Optional[str] = None
+    salience: Optional[float] = None
+    split_by_category: bool = False
+
+@app.post("/api/memory/import")
+async def import_external_memory(
+    payload: MemoryImportPayload,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    user = get_current_user(credentials.credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    md = (payload.markdown or "").strip()
+    if not md:
+        raise HTTPException(status_code=400, detail="markdown is required")
+    provider = (payload.provider or "").strip().lower()
+    label = (payload.label or "").strip()
+    split = bool(payload.split_by_category)
+    import_id = uuid.uuid4().hex[:12]
+    meta = []
+    if provider:
+        meta.append(f"provider: {provider}")
+    if label:
+        meta.append(f"label: {label}")
+    meta.append(f"import_id: {import_id}")
+    meta_line = f"External memory import ({', '.join(meta)})"
+    stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ")
+    source_parts = ["imported"]
+    if provider:
+        source_parts.append(provider)
+    source_parts.append(import_id)
+    source = ":".join(source_parts)
+    sal = payload.salience
+    try:
+        sal = float(sal) if sal is not None else 0.8
+    except Exception:
+        sal = 0.8
+    def split_sections(text: str) -> List[Dict[str, str]]:
+        lines = (text or "").replace("\r", "").split("\n")
+        cats = [
+            ("demographics", ["informações demográficas", "demographic information"], {"1"}),
+            ("interests", ["interesses e preferências", "interests and preferences"], {"2"}),
+            ("relationships", ["relacionamentos", "relationships"], {"3"}),
+            ("events", ["eventos, projetos e planos", "events, projects and plans"], {"4"}),
+            ("instructions", ["instruções", "instructions"], {"5"}),
+        ]
+        starts: List[Dict[str, Any]] = []
+        for i, raw in enumerate(lines):
+            line = (raw or "").strip()
+            if not line:
+                continue
+            m = re.match(r"^\s{0,3}#{0,6}\s*(?:(\d{1})\s*[.)-]\s*)?(.*)$", raw)
+            if not m:
+                continue
+            num = (m.group(1) or "").strip()
+            rest = (m.group(2) or "").strip().lower()
+            for key, phrases, nums in cats:
+                hit_num = bool(num and num in nums)
+                hit_phrase = any(p in rest for p in phrases)
+                if hit_num or hit_phrase:
+                    starts.append({"idx": i, "key": key, "title": raw.strip()})
+                    break
+        if not starts:
+            return [{"key": "import", "title": "import", "markdown": text.strip()}]
+        starts.sort(key=lambda x: int(x["idx"]))
+        uniq: List[Dict[str, Any]] = []
+        seen = set()
+        for s in starts:
+            k = str(s["key"])
+            if k in seen:
+                continue
+            seen.add(k)
+            uniq.append(s)
+        out = []
+        for j, s in enumerate(uniq):
+            a = int(s["idx"])
+            b = int(uniq[j + 1]["idx"]) if j + 1 < len(uniq) else len(lines)
+            chunk = "\n".join(lines[a:b]).strip()
+            if not chunk:
+                continue
+            out.append({"key": str(s["key"]), "title": str(s["title"]), "markdown": chunk})
+        return out or [{"key": "import", "title": "import", "markdown": text.strip()}]
+
+    sections = split_sections(md) if split else [{"key": "import", "title": "import", "markdown": md}]
+    created_ids: List[int] = []
+    for s in sections:
+        sec_key = str(s.get("key") or "import")
+        sec_title = str(s.get("title") or "").strip()
+        sec_md = str(s.get("markdown") or "").strip()
+        if not sec_md:
+            continue
+        sec_meta = f"{meta_line} — imported_at: {stamp}"
+        if split and sec_title and sec_title != "import":
+            sec_meta = f"{meta_line} — imported_at: {stamp} — section: {sec_title}"
+        content = f"{sec_meta}\n\n{sec_md}"
+        eid = append_soul_event(int(user["id"]), source, content)
+        created_ids.append(int(eid))
+        sec_sal = 0.9 if sec_key == "instructions" else float(sal)
+        set_soul_event_salience(int(user["id"]), int(eid), float(sec_sal))
+        if sec_key == "instructions":
+            set_soul_event_pinned(int(user["id"]), int(eid), True)
+
+    if not created_ids:
+        raise HTTPException(status_code=400, detail="No valid sections found")
+    return {"ok": True, "event_id": created_ids[0], "event_ids": created_ids, "import_id": import_id, "source": source}
+
+class MemoryImportPinPayload(BaseModel):
+    pinned: bool = True
+
+@app.get("/api/memory/imports")
+async def list_external_memory_imports(
+    limit: int = Query(25, ge=1, le=200),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    user = get_current_user(credentials.credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    items = list_imported_soul_events(int(user["id"]), limit=int(limit))
+    groups: Dict[str, Dict[str, Any]] = {}
+    for it in items:
+        src = str(it.get("source") or "")
+        parts = src.split(":")
+        import_id = ""
+        provider2 = ""
+        if len(parts) >= 2 and re.fullmatch(r"[0-9a-f]{10,64}", parts[-1] or ""):
+            import_id = parts[-1]
+            provider2 = parts[1] if len(parts) >= 3 else ""
+        key = import_id if import_id else f"legacy_{it.get('id')}"
+        g = groups.get(key)
+        if not g:
+            groups[key] = {
+                "import_id": key,
+                "provider": provider2,
+                "source": src,
+                "created_at": it.get("created_at"),
+                "count": 0,
+                "pinned": False,
+                "items": [],
+            }
+            g = groups[key]
+        g["count"] = int(g["count"]) + 1
+        g["pinned"] = bool(g["pinned"]) or bool(it.get("pinned"))
+        g["items"].append(
+            {
+                "id": it.get("id"),
+                "source": src,
+                "created_at": it.get("created_at"),
+                "salience": it.get("salience"),
+                "pinned": it.get("pinned"),
+                "content": it.get("content"),
+            }
+        )
+    out = list(groups.values())
+    out.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
+    return {"imports": out}
+
+@app.post("/api/memory/imports/{import_id}/pin")
+async def pin_external_memory_import(
+    import_id: str,
+    payload: MemoryImportPinPayload,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    user = get_current_user(credentials.credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    iid = (import_id or "").strip()
+    if not iid:
+        raise HTTPException(status_code=400, detail="import_id is required")
+    pinned = bool(payload.pinned)
+    touched = 0
+    if iid.startswith("legacy_"):
+        try:
+            event_id = int(iid.split("_", 1)[1])
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid legacy import_id")
+        ok = set_soul_event_pinned(int(user["id"]), int(event_id), pinned)
+        return {"ok": bool(ok)}
+    items = list_imported_soul_events(int(user["id"]), limit=500)
+    for it in items:
+        src = str(it.get("source") or "")
+        if src.endswith(f":{iid}") or src == f"imported:{iid}":
+            if set_soul_event_pinned(int(user["id"]), int(it.get("id")), pinned):
+                touched += 1
+    return {"ok": True, "touched": touched}
+
+@app.delete("/api/memory/imports/{import_id}")
+async def delete_external_memory_import(
+    import_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    user = get_current_user(credentials.credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    iid = (import_id or "").strip()
+    if not iid:
+        raise HTTPException(status_code=400, detail="import_id is required")
+    deleted = 0
+    if iid.startswith("legacy_"):
+        try:
+            event_id = int(iid.split("_", 1)[1])
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid legacy import_id")
+        ok = delete_imported_soul_event(int(user["id"]), int(event_id))
+        return {"ok": bool(ok)}
+    items = list_imported_soul_events(int(user["id"]), limit=500)
+    for it in items:
+        src = str(it.get("source") or "")
+        if src.endswith(f":{iid}") or src == f"imported:{iid}":
+            if delete_imported_soul_event(int(user["id"]), int(it.get("id"))):
+                deleted += 1
+    return {"ok": True, "deleted": deleted}
+
+@app.get("/api/padxml/software")
+async def list_padxml_software(
+    limit: int = Query(20, ge=1, le=200),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    user = get_current_user(credentials.credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    db_path = os.path.join(str(BASE_DIR), "src", "backend", "data", "padxml.db")
+    if not os.path.exists(db_path):
+        return {"items": []}
+    items: List[Dict[str, Any]] = []
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT record_id, record_type, provider, source_url, collected_at, payload_json, created_at
+                FROM padxml_records
+                WHERE record_type = 'software'
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+            for r in rows:
+                try:
+                    payload = json.loads(r["payload_json"])
+                except Exception:
+                    payload = {}
+                content = payload.get("content") or {}
+                items.append(
+                    {
+                        "record_id": r["record_id"],
+                        "record_type": r["record_type"],
+                        "name": content.get("name"),
+                        "version": content.get("version"),
+                        "os": content.get("os"),
+                        "arch": content.get("arch"),
+                        "provider": r["provider"],
+                        "source_url": r["source_url"],
+                        "collected_at": r["collected_at"],
+                        "created_at": r["created_at"],
+                    }
+                )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PADXML list failed: {e}")
+    return {"items": items}
+
+class PadxmlSaveMessageInput(BaseModel):
+    conversation_id: Optional[int] = None
+    local_message_id: Optional[int] = None
+    message_id: Optional[int] = None
+    content: str = ""
+    title: Optional[str] = None
+
+@app.post("/api/padxml/save_message")
+async def save_message_as_padxml(
+    payload: PadxmlSaveMessageInput,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    user = get_current_user(credentials.credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    content = str(payload.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="content is required")
+
+    conv_id = payload.conversation_id
+    mid = payload.local_message_id or payload.message_id
+    url = f"https://open-slap.local/conversations/{conv_id or 0}/messages/{mid or 0}"
+    title = str(payload.title or "").strip()
+    if not title:
+        first = next((ln.strip() for ln in content.splitlines() if ln.strip()), "")
+        title = (first[:120] if first else "Saved information")
+
+    sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    padxml = {
+        "schema_version": "padxml.v1",
+        "record_type": "article",
+        "record_id": "",
+        "source": {
+            "provider": "open_slap",
+            "url": url,
+            "collected_at": now,
+            "robots": {"allowed": True},
+            "crawl_policy": {"rate_limit_rps": 0.0, "user_agent": "OpenSlap"},
+            "checksums": {"content_sha256": sha},
+            "evidence": [{"type": "url", "value": url}],
+        },
+        "content": {"title": title, "summary": content},
+        "security": {"sanitized": True, "contains_pii": False},
+    }
+    normalize_padxml(padxml)
+    ok, errs = validate_padxml_v1(padxml)
+    if not ok:
+        raise HTTPException(status_code=400, detail="PADXML invalid: " + "; ".join(errs))
+
+    db_path = os.path.join(str(BASE_DIR), "src", "backend", "data", "padxml.db")
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS padxml_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    record_id TEXT NOT NULL UNIQUE,
+                    record_type TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    source_url TEXT NOT NULL,
+                    collected_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_padxml_by_type ON padxml_records(record_type)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_padxml_by_provider ON padxml_records(provider)"
+            )
+            payload_json = json.dumps(padxml, ensure_ascii=False, separators=(",", ":"))
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO padxml_records
+                (record_id, record_type, provider, source_url, collected_at, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    padxml["record_id"],
+                    padxml["record_type"],
+                    padxml["source"]["provider"],
+                    padxml["source"]["url"],
+                    padxml["source"]["collected_at"],
+                    payload_json,
+                ),
+            )
+            conn.commit()
+            action = "inserted" if cur.rowcount and int(cur.rowcount) > 0 else "skipped"
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PADXML save failed: {e}")
+
+    return {"ok": True, "action": action, "record_id": padxml["record_id"]}
+
 
 # ── Onboarding ────────────────────────────────────────────────────────────────
 
@@ -7203,6 +7268,9 @@ async def get_onboarding_status(
     user = get_current_user(credentials.credentials)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    stored = get_user_onboarding_completed(user["id"])
+    if stored is not None:
+        return {"completed": bool(stored), "conversation_count": None, "source": "flag"}
     # Onboarding is considered complete when user has at least one conversation
     with __import__("sqlite3").connect(str(get_db_path())) as conn:
         row = conn.execute(
@@ -7210,7 +7278,29 @@ async def get_onboarding_status(
         ).fetchone()
         count = row[0] if row else 0
     completed = count > 0
-    return {"completed": completed, "conversation_count": count}
+    return {"completed": completed, "conversation_count": count, "source": "conversations"}
+
+
+@app.post("/api/onboarding/complete")
+async def complete_onboarding(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    user = get_current_user(credentials.credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    set_user_onboarding_completed(user["id"], True)
+    return {"ok": True, "completed": True}
+
+
+@app.post("/api/onboarding/reset")
+async def reset_onboarding(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    user = get_current_user(credentials.credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    set_user_onboarding_completed(user["id"], False)
+    return {"ok": True, "completed": False}
 
 
 # WebSocket com autenticação
@@ -7339,6 +7429,20 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     # Salvar mensagem do usuário
                     _user_msg_id = save_message(conversation_id, "user", user_message)
                     try:
+                        client_message_id = str(data.get("client_message_id") or "").strip()
+                        saved_user_msg = get_message(int(_user_msg_id)) if _user_msg_id else None
+                        if client_message_id and saved_user_msg:
+                            await websocket.send_json(
+                                {
+                                    "type": "user_ack",
+                                    "client_message_id": client_message_id,
+                                    "message": saved_user_msg,
+                                }
+                            )
+                            _last_emit[0] = time.time()
+                    except Exception:
+                        pass
+                    try:
                         logger.info(
                             "ws_chat_start user_id=%s session_id=%s conversation_id=%s chars=%s",
                             str(current_user.get("id")),
@@ -7357,6 +7461,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                                     current_user["id"],
                                     conversation_id,
                                     t,
+                                    kind="step",
+                                    actor="human",
+                                    origin="user",
+                                    scope="project",
+                                    priority="medium",
                                     source_conversation_id=int(conversation_id),
                                     source_message_id=int(_user_msg_id)
                                     if _user_msg_id
@@ -7387,6 +7496,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                                     current_user["id"],
                                     int(inbox_id),
                                     t,
+                                    kind="step",
+                                    actor="human",
+                                    origin="user",
+                                    scope="personal",
+                                    priority="medium",
                                     source_conversation_id=int(conversation_id),
                                     source_message_id=int(_user_msg_id)
                                     if _user_msg_id
@@ -7399,6 +7513,33 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                                 }
                             )
                             _last_emit[0] = time.time()
+                            if _looks_like_personal_todo_capture(user_message) and not internal_prompt:
+                                msg = (
+                                    f"✅ Registrei {len(todo_items)} TODO(s) na sua Inbox (Pessoal). "
+                                    "Veja em Settings → Tarefas → Pessoal."
+                                )
+                                msg_id = save_message(
+                                    conversation_id,
+                                    "assistant",
+                                    msg,
+                                    expert_id="general",
+                                    provider="runtime",
+                                    model="todo",
+                                    tokens=None,
+                                )
+                                await websocket.send_json(
+                                    {
+                                        "type": "done",
+                                        "content": msg,
+                                        "expert": {"id": "general"},
+                                        "provider": "runtime",
+                                        "model": "todo",
+                                        "tokens": None,
+                                        "message_id": msg_id,
+                                    }
+                                )
+                                _last_emit[0] = time.time()
+                                continue
 
                     wizard = _project_wizard_handle_message(
                         user_id=int(current_user["id"]),
@@ -8089,7 +8230,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     llm_override = _safe_llm_settings(
                         (stored_llm or {}).get("settings") or {}
                     )
-                    api_key = _get_user_api_key(current_user["id"])
+                    api_key = _get_user_api_key(current_user["id"], llm_override.get("provider"))
                     if api_key:
                         llm_override["api_key"] = api_key
 
@@ -8647,26 +8788,6 @@ async def get_artifact(
     return r
 
 
-@app.get("/api/experts")
-async def get_experts(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Lista de especialistas"""
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    return {"experts": moe_router.get_experts()}
-
-
-@app.get("/api/providers")
-async def get_providers(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Status dos providers"""
-    token = credentials.credentials
-    current_user = get_current_user(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-    return {"providers": await llm_manager.get_provider_status()}
-
-
 @app.get("/api/system_profile/installed_software")
 async def get_installed_sw(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
@@ -8700,6 +8821,42 @@ async def refresh_inventory(credentials: HTTPAuthorizationCredentials = Depends(
         pass
     return {"ok": True, "count": len(items), "top20_count": len(top20)}
 
+@app.get("/api/system_map")
+async def get_system_map(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    current_user = get_current_user(token)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+    sec = _get_effective_security_settings(int(current_user["id"]))
+    if not sec.get("allow_system_profile"):
+        raise HTTPException(status_code=403, detail="Permissão negada")
+    global _system_map_cache
+    if not str(_system_map_cache.get("ascii") or "").strip():
+        ascii_map = _generate_system_map_ascii()
+        _system_map_cache = {
+            "ascii": ascii_map,
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+        }
+    return {"ascii": _system_map_cache.get("ascii") or "", "generated_at": _system_map_cache.get("generated_at") or ""}
+
+
+@app.post("/api/system_map/refresh")
+async def refresh_system_map(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    current_user = get_current_user(token)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+    sec = _get_effective_security_settings(int(current_user["id"]))
+    if not sec.get("allow_system_profile"):
+        raise HTTPException(status_code=403, detail="Permissão negada")
+    global _system_map_cache
+    ascii_map = _generate_system_map_ascii()
+    _system_map_cache = {
+        "ascii": ascii_map,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+    return {"ascii": _system_map_cache.get("ascii") or "", "generated_at": _system_map_cache.get("generated_at") or ""}
+
 
 @app.get("/api/doctor")
 async def doctor_endpoint(
@@ -8717,7 +8874,7 @@ async def doctor_endpoint(
     llm_provider = str(llm_settings.get("provider") or "").strip().lower()
     llm_model = str(llm_settings.get("model") or "").strip()
     llm_base_url = str(llm_settings.get("base_url") or "").strip()
-    stored_key = _get_user_api_key(user_id) or ""
+    stored_key = _get_user_api_key(user_id, llm_provider) or ""
     api_key = stored_key
     api_key_source = "stored" if stored_key else "none"
     has_api_key = bool(api_key)
@@ -9254,6 +9411,43 @@ async def commands_execute_pending(
         **run_res,
     }
 
+@app.post("/api/commands/pending/{request_id}/autoapprove")
+async def commands_autoapprove_pending(
+    request_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    token = credentials.credentials
+    current_user = get_current_user(token)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+    sec = _get_effective_security_settings(int(current_user["id"]))
+    if not sec.get("allow_os_commands"):
+        raise HTTPException(
+            status_code=403,
+            detail="Execução de comandos desabilitada nas permissões desta conta.",
+        )
+    if not ENABLE_OS_COMMANDS:
+        raise HTTPException(
+            status_code=400, detail="Execução de comandos desabilitada no servidor."
+        )
+    req = pending_command_registry.get(request_id)
+    if not req:
+        raise HTTPException(status_code=404, detail="Solicitação não encontrada ou expirada.")
+    if int(req.get("user_id") or 0) != int(current_user["id"]):
+        raise HTTPException(status_code=403, detail="Sem permissão para esta solicitação.")
+
+    cmd = str(req.get("command") or "").strip()
+    if not cmd:
+        raise HTTPException(status_code=400, detail="Comando vazio.")
+    plan = _command_policy_evaluate(command=cmd, cwd=str(req.get("cwd") or ""), user_id=int(current_user["id"]))
+    if not plan.get("allowed"):
+        raise HTTPException(status_code=400, detail=plan.get("blocked_reason") or "Comando bloqueado.")
+    if int(plan.get("risk_level") or 1) != 1:
+        raise HTTPException(status_code=400, detail="Apenas comandos de baixo risco podem ser autoaprovados.")
+
+    key = _normalize_command_key(cmd)
+    ok = add_user_command_autoapprove(int(current_user["id"]), key)
+    return {"ok": True, "added": bool(ok), "command_norm": key}
 
 @app.get("/api/friction/config")
 async def friction_config(
@@ -9459,6 +9653,7 @@ if _FRONTEND_DIST.exists():
 # Inicialização
 if __name__ == "__main__":
     import uvicorn
+    from pathlib import Path
 
     # Criar diretório de dados
     os.makedirs("data", exist_ok=True)
@@ -9474,9 +9669,14 @@ if __name__ == "__main__":
     print("   DELETE /api/conversations/{id} - Deletar conversa")
     print("   WS   /ws/{session_id}?token={jwt} - Chat com streaming")
 
+    reload_env = (os.getenv("OPENSLAP_RELOAD") or "").strip().lower()
+    should_reload = reload_env in {"1", "true", "yes", "on"}
+    backend_dir = str(Path(__file__).resolve().parent)
     uvicorn.run(
         "main_auth:app",
         host=os.getenv("OPENSLAP_HOST", "127.0.0.1"),
         port=int(os.getenv("OPENSLAP_PORT", "5150")),
-        reload=True,
+        reload=should_reload,
+        reload_dirs=[backend_dir] if should_reload else None,
+        reload_excludes=["data/*", "*.db", "*.sqlite", "**/*.db", "**/*.sqlite"] if should_reload else None,
     )

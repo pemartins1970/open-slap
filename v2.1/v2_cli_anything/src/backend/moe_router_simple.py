@@ -70,7 +70,7 @@ class MoERouter:
                 ],
                 prompt=(
                     "Você é o CTO (Arquiteto de Soluções). Fluxo: PLAN → DELEGATE → BUILD.\n"
-                    "Regra: apresente o TDD, mas pense como engenheiro: quando o pedido exigir ação concreta, gere também comandos CLI específicos prontos para execução.\n\n"
+                    "Regra: apresente um plano técnico detalhado (TDD — Technical Design Document), mas seja pragmático: quando o pedido exigir ação concreta, gere também comandos CLI específicos prontos para execução.\n\n"
                     "Segurança de credenciais: nunca solicite chaves de API ou secrets no chat. Se precisar, oriente o usuário a usar Settings → LLM (token: [[open_settings:llm_api_key]]).\n\n"
                     "Aprendizado: use as preferências e fatos já registrados na memória disponível no contexto.\n\n"
                     "PLAN (Análise):\n"
@@ -431,7 +431,6 @@ class MoERouter:
                     "- Você recebe no contexto informações de Runtime/system, Settings e Memória. Use isso como fonte válida para inferir caminhos, limitações, conectores e capacidades do sistema.\n"
                     "- Evite perguntar ao usuário por informações que já estejam no contexto.\n\n"
                     "Execução imediata:\n"
-                    "- Se o pedido for simples e local (ex.: gerar diagrama no Draw.io), NÃO delegue ao CTO. Gere um plano mínimo com UMA tarefa software_operator e execute-a imediatamente no mesmo turno, a menos que haja risco de segurança crítico.\n"
                     "- Responda ao usuário com apenas uma frase curta (ex.: \"Entendido. Estou desenhando o fluxo agora...\") e prossiga com a execução.\n\n"
                     "Plano executável (quando necessário):\n"
                     "- Se o pedido exigir execução/alteração no projeto, crie um plano em um bloco ```plan``` para que o sistema execute.\n"
@@ -444,7 +443,6 @@ class MoERouter:
                     "Regra de ouro (credenciais): você nunca solicita chaves de API, tokens ou secrets no chat. Se precisar orientar configuração, direcione o usuário para Settings → LLM e, se necessário, inclua o token [[open_settings:llm_api_key]] para abrir o campo.\n\n"
                     "Aprendizado: use a memória do usuário disponível no contexto para adaptar o seu estilo (ritmo, concisão e preferências) ao longo do tempo.\n\n"
                     "Capacidades:\n"
-                    "- Gestão de tarefas: organizar prioridades, criar listas de afazeres e lembrar de prazos.\n"
                     "- Gestão de tarefas: organizar prioridades, criar listas de afazeres e lembrar de prazos.\n"
                     "- Organização de agenda: planejar compromissos e gestão de tempo.\n"
                     "- Resumo e pesquisa: resumir textos longos, PDFs e planilhas; pesquisar informações relevantes.\n"
@@ -499,9 +497,10 @@ class MoERouter:
         try:
             from .llm_manager_simple import llm_manager
 
-            provider = (
-                str(os.getenv("OPENSLAP_ROUTER_PROVIDER") or "groq").strip().lower()
-            )
+            provider_env = str(os.getenv("OPENSLAP_ROUTER_PROVIDER") or "").strip()
+            if not provider_env or provider_env.lower() in ("off", "false", "0", "none", "disabled"):
+                raise RuntimeError("router provider not configured")
+            provider = provider_env.lower()
             model = str(
                 os.getenv("OPENSLAP_ROUTER_MODEL") or "llama-3.1-8b-instant"
             ).strip()

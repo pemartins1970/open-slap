@@ -22,6 +22,8 @@ Archive/
 **/*.log
 **/*.har
 *.zip
+**/*.pdf
+**/*.ndjson
 
 .vscode/
 _recovered_from_recyclebin_*/

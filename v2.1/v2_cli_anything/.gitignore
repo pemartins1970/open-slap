@@ -9,6 +9,8 @@ __pycache__/
 src/data/*.db
 src/data/backups/
 src/backend/data/*.db
+media/workspace/
+temp_tool_*.py
 
 # Frontend
 src/frontend/node_modules/
