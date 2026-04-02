@@ -51,6 +51,16 @@ def _redact_text(value: Optional[str]) -> Optional[str]:
     return out
 
 
+# Columns that update_task_todo is allowed to modify.
+# All column names used in dynamic SQL must appear here — never derived from
+# user input, but the whitelist makes that invariant explicit and enforceable.
+_TASK_TODO_UPDATABLE_COLUMNS: frozenset = frozenset({
+    "text", "status", "kind", "actor", "origin", "scope", "priority",
+    "due_at", "parent_todo_id", "delivery_path", "artifact_meta",
+    "source_conversation_id", "source_message_id",
+})
+
+
 class DatabaseManager:
     """Gerenciador do banco de dados SQLite"""
 
@@ -1161,61 +1171,47 @@ class DatabaseManager:
         source_conversation_id: Optional[int] = None,
         source_message_id: Optional[int] = None,
     ) -> bool:
-        sets: List[str] = []
-        args: List[Any] = []
+        updates: List[tuple] = []
         if text is not None:
-            sets.append("text = ?")
-            args.append(_redact_text(text) or "")
+            updates.append(("text", _redact_text(text) or ""))
         if status is not None:
-            sets.append("status = ?")
-            args.append(status)
+            updates.append(("status", status))
         if kind is not None:
-            sets.append("kind = ?")
-            args.append(str(kind).strip().lower())
+            updates.append(("kind", str(kind).strip().lower()))
         if actor is not None:
-            sets.append("actor = ?")
-            args.append(str(actor).strip().lower())
+            updates.append(("actor", str(actor).strip().lower()))
         if origin is not None:
-            sets.append("origin = ?")
-            args.append(str(origin).strip().lower())
+            updates.append(("origin", str(origin).strip().lower()))
         if scope is not None:
-            sets.append("scope = ?")
-            args.append(str(scope).strip().lower())
+            updates.append(("scope", str(scope).strip().lower()))
         if priority is not None:
-            sets.append("priority = ?")
-            args.append(str(priority).strip().lower())
+            updates.append(("priority", str(priority).strip().lower()))
         if due_at is not None:
-            sets.append("due_at = ?")
-            args.append((str(due_at).strip() if due_at else None))
+            updates.append(("due_at", str(due_at).strip() if due_at else None))
         if parent_todo_id is not None:
-            sets.append("parent_todo_id = ?")
-            args.append(int(parent_todo_id))
+            updates.append(("parent_todo_id", int(parent_todo_id)))
         if delivery_path is not None:
-            sets.append("delivery_path = ?")
-            args.append((str(delivery_path).strip() if delivery_path else None))
+            updates.append(("delivery_path", str(delivery_path).strip() if delivery_path else None))
         if artifact_meta is not None:
-            sets.append("artifact_meta = ?")
             try:
-                args.append(json.dumps(artifact_meta, ensure_ascii=False))
+                updates.append(("artifact_meta", json.dumps(artifact_meta, ensure_ascii=False)))
             except Exception:
-                args.append(None)
+                updates.append(("artifact_meta", None))
         if source_conversation_id is not None:
-            sets.append("source_conversation_id = ?")
-            args.append(int(source_conversation_id))
+            updates.append(("source_conversation_id", int(source_conversation_id)))
         if source_message_id is not None:
-            sets.append("source_message_id = ?")
-            args.append(int(source_message_id))
-        if not sets:
+            updates.append(("source_message_id", int(source_message_id)))
+        if not updates:
             return False
-        sets.append("updated_at = CURRENT_TIMESTAMP")
-        args.extend([todo_id, user_id])
+        # Validate every column name against the whitelist before touching SQL
+        for col, _ in updates:
+            if col not in _TASK_TODO_UPDATABLE_COLUMNS:
+                raise ValueError(f"Column '{col}' is not an allowed update target")
+        sets = [f"{col} = ?" for col, _ in updates] + ["updated_at = CURRENT_TIMESTAMP"]
+        args = [v for _, v in updates] + [todo_id, user_id]
         with sqlite3.connect(self.db_path) as conn:
             cur = conn.execute(
-                f"""
-                UPDATE task_todos
-                SET {", ".join(sets)}
-                WHERE id = ? AND user_id = ?
-            """,
+                "UPDATE task_todos SET " + ", ".join(sets) + " WHERE id = ? AND user_id = ?",
                 tuple(args),
             )
             conn.commit()
