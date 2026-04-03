@@ -414,15 +414,14 @@ app.add_middleware(AuthRequiredMiddleware)
 async def _serve_media_direct(file_path: str):
     media_path = (MEDIA_DIR / file_path).resolve()
     try:
-        if MEDIA_DIR.resolve() in media_path.parents and media_path.is_file():
-            r = FileResponse(str(media_path))
-            r.headers["Cache-Control"] = "no-store"
-            r.headers["Pragma"] = "no-cache"
-            return r
-    except Exception:
-        pass
-    from fastapi import HTTPException
-
+        media_path.relative_to(MEDIA_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+    if media_path.is_file():
+        r = FileResponse(str(media_path))
+        r.headers["Cache-Control"] = "no-store"
+        r.headers["Pragma"] = "no-cache"
+        return r
     raise HTTPException(status_code=404, detail="Arquivo não encontrado")
 
 
