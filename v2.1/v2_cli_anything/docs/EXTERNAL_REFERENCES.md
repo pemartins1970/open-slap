@@ -59,3 +59,34 @@ Link: https://github.com/paoloanzn/free-code
 - Este repositório declara ser um fork buildável de uma base exposta publicamente; avaliar implicações legais/éticas antes de depender dele.
 - Não incorporar código/artefatos de terceiros sem revisão de licenças e sem evitar “contaminação” de implementação.
 
+## Andrej Karpathy: llm-council (multi-model consensus)
+
+Link: https://github.com/karpathy/llm-council
+
+### Ideia principal
+
+- “Council” de modelos: coletar respostas independentes, fazer revisão cruzada entre modelos (anônimo) e sintetizar por um “Chairman”.
+
+### O que aproveitar no Open Slap!
+
+- Consenso multi-modelo para tarefas sensíveis (ex.: análise, verificação, segurança), sem depender de um único provider.
+- Etapas explícitas anti-alucinação:
+  - respostas independentes
+  - revisão cruzada com ranking por acurácia/insight
+  - síntese final
+- “Primary source veto”: quando houver fonte primária contraditória, capar confiança e forçar resultado para “mixed/needs verification”.
+
+### Procedimentos (etapa posterior)
+
+- Definir um “council mode” no orquestrador (opt-in) para operações de alto risco.
+- Registrar no trace/event log:
+  - modelos usados
+  - notas de revisão
+  - decisão do chairman + justificativa curta
+  - links de fontes primárias que influenciaram veto
+- Aplicar budget guard: limitar tokens/custo para evitar explosão de gasto.
+
+### Riscos/alertas
+
+- Custo/latência: multi-model aumenta custo e tempo; deve ser restrito a casos específicos.
+- Viés de revisão: anonimizar identidades reduz “favoritismo” entre providers.
