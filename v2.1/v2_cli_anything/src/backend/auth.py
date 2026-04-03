@@ -41,7 +41,10 @@ def _load_or_create_jwt_secret() -> str:
 
 SECRET_KEY = _load_or_create_jwt_secret()
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 2  # 2 horas
+try:
+    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("OPENSLAP_JWT_EXPIRE_MINUTES") or "120")
+except Exception:
+    ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
 
 class AuthManager:
