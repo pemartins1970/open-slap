@@ -129,6 +129,7 @@ from .db import (
     get_user_llm_settings,
     upsert_user_security_settings,
     get_user_security_settings,
+    get_user_auth_settings,
     add_user_command_autoapprove,
     list_user_command_autoapprove,
     delete_user_command_autoapprove,
@@ -5563,7 +5564,18 @@ async def login(user: UserLogin):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    access_token = create_access_token(data={"sub": str(authenticated_user["id"])})
+    expires_minutes = None
+    try:
+        stored = get_user_auth_settings(int(authenticated_user["id"])) or {}
+        raw = stored.get("settings") if isinstance(stored.get("settings"), dict) else {}
+        v = (raw or {}).get("jwt_expire_minutes", None)
+        expires_minutes = int(v) if v is not None else None
+    except Exception:
+        expires_minutes = None
+    access_token = create_access_token(
+        data={"sub": str(authenticated_user["id"])},
+        expires_minutes=expires_minutes,
+    )
 
     return {
         "access_token": access_token,

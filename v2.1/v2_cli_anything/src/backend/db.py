@@ -346,6 +346,17 @@ class DatabaseManager:
 
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS user_auth_settings (
+                    user_id INTEGER PRIMARY KEY,
+                    auth_json TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (id)
+                )
+            """
+            )
+
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS user_command_autoapprove (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
@@ -2057,6 +2068,42 @@ class DatabaseManager:
                 "updated_at": row["updated_at"],
             }
 
+    def upsert_user_auth_settings(self, user_id: int, auth_settings: Dict[str, Any]) -> None:
+        auth_json = json.dumps(auth_settings or {}, ensure_ascii=False)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO user_auth_settings (user_id, auth_json, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET
+                  auth_json=excluded.auth_json,
+                  updated_at=CURRENT_TIMESTAMP
+                """,
+                (user_id, auth_json),
+            )
+            conn.commit()
+
+    def delete_user_auth_settings(self, user_id: int) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute("DELETE FROM user_auth_settings WHERE user_id = ?", (int(user_id),))
+            conn.commit()
+            return bool(cur.rowcount and int(cur.rowcount) > 0)
+
+    def get_user_auth_settings(self, user_id: int) -> Optional[Dict[str, Any]]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT auth_json, updated_at FROM user_auth_settings WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                data = json.loads(row["auth_json"] or "{}")
+            except Exception:
+                data = {}
+            return {"settings": data, "updated_at": row["updated_at"]}
+
     def add_user_command_autoapprove(self, user_id: int, command_norm: str) -> bool:
         v = str(command_norm or "").strip().lower()
         if not v:
@@ -2915,6 +2962,17 @@ def upsert_user_security_settings(
 
 def get_user_security_settings(user_id: int) -> Optional[Dict[str, Any]]:
     return db_manager.get_user_security_settings(user_id)
+
+def upsert_user_auth_settings(user_id: int, auth_settings: Dict[str, Any]) -> None:
+    return db_manager.upsert_user_auth_settings(user_id, auth_settings)
+
+
+def delete_user_auth_settings(user_id: int) -> bool:
+    return db_manager.delete_user_auth_settings(user_id)
+
+
+def get_user_auth_settings(user_id: int) -> Optional[Dict[str, Any]]:
+    return db_manager.get_user_auth_settings(user_id)
 
 def add_user_command_autoapprove(user_id: int, command_norm: str) -> bool:
     return db_manager.add_user_command_autoapprove(user_id, command_norm)

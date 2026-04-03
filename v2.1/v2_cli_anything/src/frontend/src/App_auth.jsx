@@ -106,6 +106,14 @@ const App = () => {
     allow_system_profile: true
   });
   const [securitySettingsUpdatedAt, setSecuritySettingsUpdatedAt] = useState('');
+  const [authSettings, setAuthSettings] = useState({
+    jwt_expire_minutes: 120,
+    default_jwt_expire_minutes: 120,
+    has_override: false
+  });
+  const [authSettingsUpdatedAt, setAuthSettingsUpdatedAt] = useState('');
+  const [jwtExpireMinutesDraft, setJwtExpireMinutesDraft] = useState(120);
+  const [authSettingsSaving, setAuthSettingsSaving] = useState(false);
   const [autoApproveCommands, setAutoApproveCommands] = useState([]);
   const [autoApproveCommandsLoading, setAutoApproveCommandsLoading] = useState(false);
   const [autoApproveCommandsError, setAutoApproveCommandsError] = useState('');
@@ -1320,6 +1328,23 @@ const App = () => {
       } catch {}
 
       try {
+        const authRes = await fetch('/api/settings/auth', { headers });
+        const authJson = await authRes.json().catch(() => ({}));
+        if (authRes.ok) {
+          const effective = Number(authJson?.settings?.jwt_expire_minutes || 120) || 120;
+          const def = Number(authJson?.defaults?.jwt_expire_minutes || 120) || 120;
+          const hasOverride = Boolean(authJson?.has_override);
+          setAuthSettings({
+            jwt_expire_minutes: effective,
+            default_jwt_expire_minutes: def,
+            has_override: hasOverride
+          });
+          setAuthSettingsUpdatedAt(authJson?.updated_at || '');
+          setJwtExpireMinutesDraft(effective);
+        }
+      } catch {}
+
+      try {
         const acRes = await fetch('/api/automation_client', { headers });
         const acJson = await acRes.json().catch(() => ({}));
         if (acRes.ok) {
@@ -1866,6 +1891,79 @@ const App = () => {
     }
     setSecuritySettings(next);
     saveSecuritySettings(next);
+  };
+
+  const saveAuthSettings = async ({ jwt_expire_minutes, use_default }) => {
+    try {
+      const headers = getAuthHeaders();
+      if (!headers.Authorization) return false;
+      setAuthSettingsSaving(true);
+      const payload = {
+        jwt_expire_minutes: use_default ? null : Number(jwt_expire_minutes || 0),
+        use_default: Boolean(use_default)
+      };
+      const res = await fetch('/api/settings/auth', {
+        method: 'PUT',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.detail || (lang === 'pt' ? 'Não foi possível salvar.' : 'Could not save.'));
+      }
+      const effective = Number(json?.settings?.jwt_expire_minutes || 120) || 120;
+      const def = Number(json?.defaults?.jwt_expire_minutes || 120) || 120;
+      const hasOverride = Boolean(json?.has_override);
+      setAuthSettings({
+        jwt_expire_minutes: effective,
+        default_jwt_expire_minutes: def,
+        has_override: hasOverride
+      });
+      setAuthSettingsUpdatedAt(json?.updated_at || '');
+      setJwtExpireMinutesDraft(effective);
+      return true;
+    } catch (e) {
+      setGenericModal({ title: t('error'), body: e?.message || (lang === 'pt' ? 'Não foi possível salvar.' : 'Could not save.') });
+      return false;
+    } finally {
+      setAuthSettingsSaving(false);
+    }
+  };
+
+  const applyJwtExpiryChange = ({ use_default = false } = {}) => {
+    const def = Number(authSettings?.default_jwt_expire_minutes || 120) || 120;
+    const raw = Number(jwtExpireMinutesDraft || 0) || 0;
+    const minutes = clamp(raw, 15, 10080);
+    const next = use_default ? def : minutes;
+    const risk =
+      next >= 24 * 60
+        ? (lang === 'pt'
+          ? 'Risco alto: sessões longas aumentam a janela de abuso em caso de token vazado.'
+          : 'High risk: long sessions increase the abuse window if a token leaks.')
+        : next >= 4 * 60
+          ? (lang === 'pt'
+            ? 'Atenção: sessões mais longas aumentam a janela de abuso em caso de token vazado.'
+            : 'Warning: longer sessions increase the abuse window if a token leaks.')
+          : (lang === 'pt'
+            ? 'Sessões curtas aumentam a segurança, mas podem exigir login mais frequente.'
+            : 'Short sessions improve security but may require more frequent logins.');
+    const body = [
+      lang === 'pt' ? 'Alterar duração da sessão (JWT)?' : 'Change session duration (JWT)?',
+      '',
+      `${lang === 'pt' ? 'Novo valor' : 'New value'}: ${next} min`,
+      `${lang === 'pt' ? 'Padrão' : 'Default'}: ${def} min`,
+      '',
+      risk,
+      '',
+      lang === 'pt'
+        ? 'Isso vale para novos tokens (você pode precisar sair/entrar novamente).'
+        : 'This applies to newly issued tokens (you may need to sign out/in again).'
+    ].join('\n');
+    setGenericModal({
+      title: t('security'),
+      body,
+      onConfirm: () => saveAuthSettings({ jwt_expire_minutes: next, use_default })
+    });
   };
 
   const saveAutomationClientSettings = async (override) => {
@@ -5832,6 +5930,12 @@ const App = () => {
                           securitySettingsUpdatedAt={securitySettingsUpdatedAt}
                           applySecuritySettingChange={applySecuritySettingChange}
                           setGenericModal={setGenericModal}
+                          authSettings={authSettings}
+                          authSettingsUpdatedAt={authSettingsUpdatedAt}
+                          jwtExpireMinutesDraft={jwtExpireMinutesDraft}
+                          setJwtExpireMinutesDraft={setJwtExpireMinutesDraft}
+                          authSettingsSaving={authSettingsSaving}
+                          applyJwtExpiryChange={applyJwtExpiryChange}
                           autoApproveCommands={autoApproveCommands}
                           autoApproveCommandsLoading={autoApproveCommandsLoading}
                           autoApproveCommandsError={autoApproveCommandsError}

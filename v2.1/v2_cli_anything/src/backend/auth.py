@@ -204,13 +204,23 @@ class AuthManager:
             return cursor.rowcount > 0
 
     def create_access_token(
-        self, data: dict, expires_delta: Optional[timedelta] = None
+        self,
+        data: dict,
+        expires_delta: Optional[timedelta] = None,
+        expires_minutes: Optional[int] = None,
     ) -> str:
         """Cria token JWT"""
         to_encode = data.copy()
 
         if expires_delta:
             expire = datetime.utcnow() + expires_delta
+        elif expires_minutes is not None:
+            try:
+                m = int(expires_minutes)
+            except Exception:
+                m = ACCESS_TOKEN_EXPIRE_MINUTES
+            m = max(1, m)
+            expire = datetime.utcnow() + timedelta(minutes=m)
         else:
             expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
@@ -253,8 +263,8 @@ def authenticate_user(email: str, password: str) -> Optional[Dict[str, Any]]:
     return auth_manager.authenticate_user(email, password)
 
 
-def create_access_token(data: dict) -> str:
-    return auth_manager.create_access_token(data)
+def create_access_token(data: dict, expires_minutes: Optional[int] = None) -> str:
+    return auth_manager.create_access_token(data, expires_minutes=expires_minutes)
 
 
 def verify_token(token: str) -> Optional[Dict[str, Any]]:

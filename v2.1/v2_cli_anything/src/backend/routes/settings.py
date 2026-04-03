@@ -1,3 +1,4 @@
+import os
 from typing import Any, Dict, Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,15 +17,18 @@ from ..deps import (
 )
 from ..db import (
     add_user_llm_provider_key_ciphertext,
+    delete_user_auth_settings,
     delete_user_api_key,
     delete_user_llm_provider_key,
     get_active_user_llm_provider_key_ciphertext,
     get_user_api_key_ciphertext,
+    get_user_auth_settings,
     get_user_llm_settings,
     get_user_system_profile,
     list_user_llm_provider_keys,
     set_active_user_llm_provider_key,
     upsert_user_api_key_ciphertext,
+    upsert_user_auth_settings,
     upsert_user_llm_settings,
     upsert_user_security_settings,
     update_user_system_profile_data,
@@ -61,6 +65,11 @@ class SecuritySettingsInput(BaseModel):
     allow_web_retrieval: Optional[bool] = None
     allow_connectors: Optional[bool] = None
     allow_system_profile: Optional[bool] = None
+
+
+class AuthSettingsInput(BaseModel):
+    jwt_expire_minutes: Optional[int] = None
+    use_default: Optional[bool] = False
 
 
 def _safe_llm_settings(inp: Dict[str, Any]) -> Dict[str, Any]:
@@ -107,6 +116,29 @@ def _safe_security_settings(inp: Dict[str, Any]) -> Dict[str, Any]:
         out["allow_web_retrieval"] = False
         out["allow_connectors"] = False
         out["allow_system_profile"] = False
+    return out
+
+
+def _default_jwt_expire_minutes() -> int:
+    raw = (os.getenv("OPENSLAP_JWT_EXPIRE_MINUTES") or "").strip()
+    try:
+        v = int(raw or "120")
+    except Exception:
+        v = 120
+    return max(15, min(v, 10080))
+
+
+def _safe_auth_settings(inp: Dict[str, Any]) -> Dict[str, Any]:
+    raw = inp or {}
+    out: Dict[str, Any] = {}
+    v = raw.get("jwt_expire_minutes", None)
+    if v is not None:
+        try:
+            iv = int(v)
+        except Exception:
+            iv = None
+        if iv is not None:
+            out["jwt_expire_minutes"] = max(15, min(iv, 10080))
     return out
 
 
@@ -334,6 +366,58 @@ async def put_security_settings_endpoint(
     settings = _safe_security_settings(merged)
     upsert_user_security_settings(int(current_user["id"]), settings)
     return {"settings": settings}
+
+
+@router.get("/api/settings/auth")
+async def get_auth_settings_endpoint(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    token = credentials.credentials
+    current_user = get_current_user(token)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+    default_minutes = _default_jwt_expire_minutes()
+    stored = get_user_auth_settings(int(current_user["id"])) or {}
+    raw = stored.get("settings") if isinstance(stored.get("settings"), dict) else {}
+    safe = _safe_auth_settings(raw or {})
+    effective_minutes = int(safe.get("jwt_expire_minutes") or default_minutes)
+    has_override = "jwt_expire_minutes" in (safe or {})
+    return {
+        "settings": {"jwt_expire_minutes": effective_minutes},
+        "defaults": {"jwt_expire_minutes": default_minutes},
+        "has_override": bool(has_override),
+        "updated_at": stored.get("updated_at") if has_override else None,
+    }
+
+
+@router.put("/api/settings/auth")
+async def put_auth_settings_endpoint(
+    payload: AuthSettingsInput,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    token = credentials.credentials
+    current_user = get_current_user(token)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+    default_minutes = _default_jwt_expire_minutes()
+    use_default = bool(payload.use_default)
+    if use_default or payload.jwt_expire_minutes is None:
+        delete_user_auth_settings(int(current_user["id"]))
+        return {
+            "settings": {"jwt_expire_minutes": default_minutes},
+            "defaults": {"jwt_expire_minutes": default_minutes},
+            "has_override": False,
+            "updated_at": None,
+        }
+    safe = _safe_auth_settings({"jwt_expire_minutes": payload.jwt_expire_minutes})
+    jwt_minutes = int(safe.get("jwt_expire_minutes") or default_minutes)
+    upsert_user_auth_settings(int(current_user["id"]), {"jwt_expire_minutes": jwt_minutes})
+    return {
+        "settings": {"jwt_expire_minutes": jwt_minutes},
+        "defaults": {"jwt_expire_minutes": default_minutes},
+        "has_override": True,
+        "updated_at": None,
+    }
 
 
 @router.get("/api/settings/language")
