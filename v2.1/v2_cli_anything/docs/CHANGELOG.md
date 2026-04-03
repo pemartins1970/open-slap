@@ -4,6 +4,16 @@ Este arquivo lista mudanças por versão (o “o que mudou”). Para decisões, 
 
 ---
 
+## v2.1.2 (03/04/2026)
+
+- Segurança: hardening do backend (CORS sem wildcard, proteção contra path traversal em /media, register sem vazamento de exceções).
+- Segurança: reset de senha com token de alta entropia (substitui código numérico curto).
+- Segurança: update_task_todo com whitelist de colunas (remove SQL dinâmico via f-string).
+- Auth: expiração do JWT reduzida e configurável via `OPENSLAP_JWT_EXPIRE_MINUTES` (default 120).
+- Testes: suíte de regressão adicionada cobrindo os pontos acima (PRs do Eduardo Pontes).
+
+---
+
 ## v2.1.1 (02/04/2026)
 
 - Projetos/Kickoff em retrabalho (fluxo e UI continuam evoluindo).
@@ -40,6 +50,16 @@ Este arquivo lista mudanças por versão (o “o que mudou”). Para decisões, 
 # Changelog — Open Slap! (Public)
 
 This file lists changes by version (“what changed”). For decisions, context, and incidents, see `docs/DEV_JOURNAL.md`.
+
+---
+
+## v2.1.2 (2026-04-03)
+
+- Security: backend hardening (no wildcard CORS, path traversal protection on /media, register endpoint does not leak exceptions).
+- Security: password reset uses a high-entropy token (replaces short numeric codes).
+- Security: update_task_todo uses a column whitelist (removes dynamic SQL via f-string).
+- Auth: JWT expiry reduced and configurable via `OPENSLAP_JWT_EXPIRE_MINUTES` (default 120).
+- Tests: regression tests added for the above (Eduardo Pontes PRs).
 
 ---
 
