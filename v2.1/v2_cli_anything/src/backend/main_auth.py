@@ -414,15 +414,14 @@ app.add_middleware(AuthRequiredMiddleware)
 async def _serve_media_direct(file_path: str):
     media_path = (MEDIA_DIR / file_path).resolve()
     try:
-        if MEDIA_DIR.resolve() in media_path.parents and media_path.is_file():
-            r = FileResponse(str(media_path))
-            r.headers["Cache-Control"] = "no-store"
-            r.headers["Pragma"] = "no-cache"
-            return r
-    except Exception:
-        pass
-    from fastapi import HTTPException
-
+        media_path.relative_to(MEDIA_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+    if media_path.is_file():
+        r = FileResponse(str(media_path))
+        r.headers["Cache-Control"] = "no-store"
+        r.headers["Pragma"] = "no-cache"
+        return r
     raise HTTPException(status_code=404, detail="Arquivo não encontrado")
 
 
@@ -503,8 +502,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # Segurança
@@ -5547,8 +5546,9 @@ async def register(user: UserRegister):
         }
     except HTTPException as e:
         raise e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao criar usuário: {str(e)}")
+    except Exception:
+        logger.exception("Unexpected error during user registration")
+        raise HTTPException(status_code=500, detail="Erro ao criar usuário")
 
 
 @app.post("/auth/login")

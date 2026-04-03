@@ -41,7 +41,10 @@ def _load_or_create_jwt_secret() -> str:
 
 SECRET_KEY = _load_or_create_jwt_secret()
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 dias
+try:
+    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("OPENSLAP_JWT_EXPIRE_MINUTES") or "120")
+except Exception:
+    ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
 
 class AuthManager:
@@ -144,7 +147,7 @@ class AuthManager:
             if not user:
                 return None
 
-            code = f"{secrets.randbelow(1_000_000):06d}"
+            code = secrets.token_urlsafe(16)
             code_hash = self.get_password_hash(code)
             expires_at = int(
                 (datetime.utcnow() + timedelta(minutes=expires_minutes)).timestamp()
