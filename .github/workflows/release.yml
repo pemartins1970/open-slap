@@ -19,7 +19,7 @@ jobs:
       - name: Install & Build Frontend
         run: |
           cd frontend
-          npm ci
+          npm install
           npm run build
 
       - name: Upload frontend dist
@@ -46,7 +46,7 @@ jobs:
           path: frontend/dist/
 
       - name: Install Electron deps
-        run: cd electron && npm ci
+        run: cd electron && npm install
         shell: bash
 
       - name: Build Windows executables
@@ -80,7 +80,7 @@ jobs:
           path: frontend/dist/
 
       - name: Install Electron deps
-        run: cd electron && npm ci
+        run: cd electron && npm install
 
       - name: Build macOS executable
         run: cd electron && npm run build:mac
@@ -112,7 +112,7 @@ jobs:
           path: frontend/dist/
 
       - name: Install Electron deps
-        run: cd electron && npm ci
+        run: cd electron && npm install
 
       - name: Build Linux executable
         run: cd electron && npm run build:linux
