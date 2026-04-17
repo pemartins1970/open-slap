@@ -4,6 +4,18 @@ Este arquivo lista mudanças por versão (o “o que mudou”). Para decisões, 
 
 ---
 
+## v2.1.3 (17/04/2026)
+
+### Correções de Build e Versão
+
+- **Correção de Versão Dinâmica**: GitHub Actions agora atualiza automaticamente a versão no package.json do Electron baseada na tag Git
+- **Fix de Nomenclatura**: Executáveis agora gerados com versão correta (ex: `Open Slap!-2.1.3-portable.exe`)
+- **Build Automatizado**: Workflow melhorado para consistência entre plataformas Windows, macOS e Linux
+- **Correção de Backend**: Execução do backend Python como módulo (`python -m backend.main_auth`) para resolver imports relativos
+- **Timeout Otimizado**: Aumentado timeout de inicialização do backend para builds portáteis
+
+---
+
 ## v2.1.1 (14/04/2026)
 
 ### Sistema Completo de Chat Especializado
@@ -73,6 +85,18 @@ Este arquivo lista mudanças por versão (o “o que mudou”). Para decisões, 
 # Changelog — Open Slap! (Public)
 
 This file lists changes by version (“what changed”). For decisions, context, and incidents, see `docs/DEV_JOURNAL.md`.
+
+---
+
+## v2.1.3 (2026-04-17)
+
+### 🔧 Build & Version Fixes
+
+- **Dynamic Version Fix**: GitHub Actions now automatically updates Electron package.json version based on Git tag
+- **Naming Fix**: Executables now generated with correct version (e.g., `Open Slap!-2.1.3-portable.exe`)
+- **Automated Build**: Improved workflow for consistency across Windows, macOS, and Linux platforms
+- **Backend Fix**: Python backend execution as module (`python -m backend.main_auth`) to resolve relative imports
+- **Timeout Optimization**: Increased backend initialization timeout for portable builds
 
 ---
 
