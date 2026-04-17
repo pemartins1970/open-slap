@@ -30,6 +30,19 @@ function log(msg) {
   startupLog.push(line);
 }
 
+function saveDiagnosticLog() {
+  const desktopPath = require('os').homedir() + '/Desktop';
+  const logPath = path.join(desktopPath, 'openslap_backend_diagnostic.txt');
+  const fullLog = startupLog.join('\n');
+  
+  try {
+    fs.writeFileSync(logPath, fullLog, 'utf8');
+    console.log(`Diagnostic log saved to: ${logPath}`);
+  } catch (err) {
+    console.log(`Failed to save diagnostic log: ${err.message}`);
+  }
+}
+
 async function findPython() {
   return new Promise((resolve) => {
     const candidates = process.platform === 'win32'
@@ -131,6 +144,23 @@ async function startBackend(pythonCmd) {
     log(`Backend path: ${backendPath}`);
     log(`Python script: ${pythonScriptPath}`);
     log(`Spawning: ${pythonCmd} -m backend.main_auth`);
+    
+    // Verificar se requirements.txt existe
+    const reqPath = path.join(backendPath, 'requirements.txt');
+    log(`requirements.txt exists: ${fs.existsSync(reqPath)}`);
+    
+    // Verificar Python path e versão
+    log(`Python executable: ${pythonCmd}`);
+    log(`Working directory: ${projectRoot}`);
+    log(`Environment PYTHONPATH: ${projectRoot}`);
+    
+    // Listar arquivos no backend
+    try {
+      const backendFiles = fs.readdirSync(backendPath);
+      log(`Backend files: ${backendFiles.slice(0, 10).join(', ')}${backendFiles.length > 10 ? '...' : ''}`);
+    } catch (err) {
+      log(`Failed to list backend files: ${err.message}`);
+    }
 
     backendProcess = spawn(pythonCmd, ['-m', 'backend.main_auth'], {
       cwd: projectRoot,
@@ -169,6 +199,7 @@ async function startBackend(pythonCmd) {
       if (code !== 0 && code !== null) {
         const errorMsg = `Backend saiu com código ${code}\n\nStdout:\n${stdoutBuffer}\n\nStderr:\n${stderrBuffer}`;
         log(errorMsg);
+        saveDiagnosticLog(); // Salvar log completo na área de trabalho
         reject(new Error(errorMsg));
       }
     });
