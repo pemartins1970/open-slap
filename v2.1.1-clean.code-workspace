@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../open-slap-electron-windows"
+		}
+	],
+	"settings": {
+	}
+}

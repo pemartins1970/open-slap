@@ -1,0 +1,84 @@
+{
+  "name": "open-slap-desktop",
+  "version": "2.1.1",
+  "description": "Desktop-local agentic engine with real-time chat, multiple LLM providers, and controlled automation",
+  "author": "Paulo Martins <pemartins1970@gmail.com>",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pemartins1970/open-slap.git"
+  },
+  "main": "electron/main.js",
+  "homepage": "./",
+  "scripts": {
+    "start": "electron .",
+    "dev": "set NODE_ENV=development && electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win --publish never",
+    "build:win-portable": "electron-builder --win portable --publish never",
+    "build:all": "electron-builder -mwl",
+    "dist": "npm run build:win"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.3"
+  },
+  "devDependencies": {
+    "electron": "^27.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.openslap.desktop",
+    "productName": "Open Slap!",
+    "directories": {
+      "buildResources": "assets"
+    },
+    "files": [
+      "electron/**/*",
+      "splash.html",
+      "package.json",
+      "assets/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": [
+          "!node_modules",
+          "!__pycache__",
+          "!*.pyc",
+          "!.env",
+          "!.git",
+          "!.venv",
+          "!venv",
+          "!dist",
+          "!build"
+        ]
+      },
+      {
+        "from": "../frontend/dist",
+        "to": "frontend/dist",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "sign": false,
+      "signingHashAlgorithms": null,
+      "certificateFile": null,
+      "certificatePassword": null
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Open Slap!"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.exe"
+    }
+  }
+}

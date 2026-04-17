@@ -1,0 +1,24 @@
+{
+  "name": "agentic-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config vite_auth.config.js",
+    "build": "vite build --config vite_auth.config.js",
+    "preview": "vite preview --config vite_auth.config.js",
+    "build:prod": "vite build --config vite_auth.config.js --mode production",
+    "serve": "vite preview --config vite_auth.config.js --port 3000"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.7.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^7.13.1",
+    "vite": "^6.4.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0"
+  }
+}
