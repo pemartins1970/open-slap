@@ -16,7 +16,9 @@
     "build": "electron-builder",
     "build:win": "electron-builder --win --publish never",
     "build:win-portable": "electron-builder --win portable --publish never",
-    "build:all": "electron-builder -mwl",
+    "build:mac": "electron-builder --mac --publish never",
+    "build:linux": "electron-builder --linux --publish never",
+    "build:all": "electron-builder -mwl --publish never",
     "dist": "npm run build:win"
   },
   "dependencies": {
@@ -79,6 +81,18 @@
     },
     "portable": {
       "artifactName": "${productName}-${version}-portable.exe"
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] }
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] }
+      ],
+      "category": "Utility"
     }
   }
 }

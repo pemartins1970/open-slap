@@ -1,0 +1,163 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'   # Dispara quando você criar uma tag como v2.1.1
+
+jobs:
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install & Build Frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+
+  build-windows:
+    name: Build Windows
+    needs: build-frontend
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+
+      - name: Install Electron deps
+        run: cd electron && npm ci
+        shell: bash
+
+      - name: Build Windows executables
+        run: cd electron && npm run build:win
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-executables
+          path: |
+            electron/dist/*.exe
+
+  build-macos:
+    name: Build macOS
+    needs: build-frontend
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+
+      - name: Install Electron deps
+        run: cd electron && npm ci
+
+      - name: Build macOS executable
+        run: cd electron && npm run build:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-executable
+          path: |
+            electron/dist/*.dmg
+
+  build-linux:
+    name: Build Linux
+    needs: build-frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+
+      - name: Install Electron deps
+        run: cd electron && npm ci
+
+      - name: Build Linux executable
+        run: cd electron && npm run build:linux
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-executable
+          path: |
+            electron/dist/*.AppImage
+
+  release:
+    name: Publish Release
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Open Slap! ${{ github.ref_name }}"
+          body: |
+            ## Download
+
+            | Platform | File |
+            |----------|------|
+            | Windows (Installer) | `Open Slap! Setup *.exe` |
+            | Windows (Portable)  | `Open Slap!-*-portable.exe` |
+            | macOS               | `Open Slap!-*.dmg` |
+            | Linux               | `Open Slap!-*.AppImage` |
+
+            > Requires Python 3.11+ installed and in PATH.
+
+            See [Installation Guide](https://github.com/pemartins1970/open-slap/blob/main/docs/INSTALLATION.md) for full setup instructions.
+          files: |
+            artifacts/windows-executables/*.exe
+            artifacts/macos-executable/*.dmg
+            artifacts/linux-executable/*.AppImage
+          draft: false
+          prerelease: false

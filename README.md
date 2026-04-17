@@ -76,6 +76,19 @@ Frontend runs at `http://localhost:5173`.
 ### 3) Desktop App (Electron)
 
 Download the latest release from the [Releases page](https://github.com/pemartins1970/open-slap/releases):
+
+| Platform | File |
+|----------|------|
+| Windows (Installer) | `Open Slap! Setup *.exe` |
+| Windows (Portable)  | `Open Slap!-*-portable.exe` |
+| macOS               | `Open Slap!-*.dmg` |
+| Linux               | `Open Slap!-*.AppImage` |
+
+> Requires Python 3.11+ installed and in PATH.
+
+### 3) Desktop App (Electron)
+
+Download the latest release from the [Releases page](https://github.com/pemartins1970/open-slap/releases):
 - `Open-Slap-2.1.1-Setup.exe` — Windows installer
 - `Open-Slap-2.1.1-portable.exe` — Windows portable (no install)
 
