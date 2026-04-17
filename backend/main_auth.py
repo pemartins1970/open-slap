@@ -5624,8 +5624,15 @@ if __name__ == "__main__":
     # Criar diretório de dados
     os.makedirs("data", exist_ok=True)
 
-    print("?? Iniciando Agêntico Backend com Autenticação")
-    print("📍 Endpoints disponíveis:")
+    # Configurar encoding UTF-8 para evitar problemas no Windows
+    import sys
+    if sys.platform == "win32":
+        import codecs
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer)
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer)
+
+    print("=> Iniciando Agêntico Backend com Autenticação")
+    print("=> Endpoints disponíveis:")
     print("   POST /auth/register - Registrar usuário")
     print("   POST /auth/login - Fazer login")
     print("   GET  /auth/me - Obter usuário atual")
