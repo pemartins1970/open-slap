@@ -123,11 +123,14 @@ async function startBackend(pythonCmd) {
       ));
     }
 
-    log(`Spawning: ${pythonCmd} -m backend.main_auth`);
-
     // O backend usa imports relativos, precisa ser executado como módulo
     // cwd deve ser o pai do backend (a raiz do projeto)
     const projectRoot = path.join(backendPath, '..');
+    
+    log(`Project root: ${projectRoot}`);
+    log(`Backend path: ${backendPath}`);
+    log(`Python script: ${pythonScriptPath}`);
+    log(`Spawning: ${pythonCmd} -m backend.main_auth`);
 
     backendProcess = spawn(pythonCmd, ['-m', 'backend.main_auth'], {
       cwd: projectRoot,
@@ -136,32 +139,54 @@ async function startBackend(pythonCmd) {
         OPENSLAP_HOST: BACKEND_HOST,
         OPENSLAP_PORT: String(BACKEND_PORT),
         PYTHONUNBUFFERED: '1',
+        PYTHONPATH: projectRoot,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    backendProcess.stdout.on('data', (d) => log(`[backend] ${d.toString().trim()}`));
-    backendProcess.stderr.on('data', (d) => log(`[backend-err] ${d.toString().trim()}`));
+    let stdoutBuffer = '';
+    let stderrBuffer = '';
 
-    backendProcess.on('error', (err) => {
-      reject(new Error(`Erro ao iniciar Python:\n${err.message}`));
+    backendProcess.stdout.on('data', (d) => {
+      const data = d.toString().trim();
+      stdoutBuffer += data + '\n';
+      log(`[backend] ${data}`);
+    });
+    
+    backendProcess.stderr.on('data', (d) => {
+      const data = d.toString().trim();
+      stderrBuffer += data + '\n';
+      log(`[backend-err] ${data}`);
     });
 
-    backendProcess.on('exit', (code) => {
+    backendProcess.on('error', (err) => {
+      log(`Python process error: ${err.message}`);
+      reject(new Error(`Erro ao iniciar Python:\n${err.message}\n\nStderr:\n${stderrBuffer}`));
+    });
+
+    backendProcess.on('exit', (code, signal) => {
+      log(`Backend process exit - code: ${code}, signal: ${signal}`);
       if (code !== 0 && code !== null) {
-        log(`Backend saiu com código ${code}`);
+        const errorMsg = `Backend saiu com código ${code}\n\nStdout:\n${stdoutBuffer}\n\nStderr:\n${stderrBuffer}`;
+        log(errorMsg);
+        reject(new Error(errorMsg));
       }
     });
 
-    // Aguarda 3s para o processo iniciar, depois começa health checks
+    // Aguarda 5s para o processo iniciar, depois começa health checks
     setTimeout(async () => {
       try {
+        // Verificar se o processo ainda está rodando
+        if (!backendProcess || backendProcess.killed) {
+          return reject(new Error('Backend process died during startup\n\nStderr:\n' + stderrBuffer));
+        }
+        
         await waitForBackend();
         resolve();
       } catch (err) {
-        reject(err);
+        reject(new Error(`${err.message}\n\nStdout:\n${stdoutBuffer}\n\nStderr:\n${stderrBuffer}`));
       }
-    }, 3000);
+    }, 5000);
   });
 }
 
