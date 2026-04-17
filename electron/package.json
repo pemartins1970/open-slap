@@ -1,6 +1,6 @@
 {
   "name": "open-slap-desktop",
-  "version": "2.1.1",
+  "version": "2.1.4",
   "description": "Desktop-local agentic engine with real-time chat, multiple LLM providers, and controlled automation",
   "author": "Paulo Martins <pemartins1970@gmail.com>",
   "license": "Apache-2.0",
@@ -59,13 +59,25 @@
       {
         "from": "../frontend/dist",
         "to": "frontend/dist",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "sign": false,
       "signingHashAlgorithms": null,
@@ -84,13 +96,24 @@
     },
     "mac": {
       "target": [
-        { "target": "dmg", "arch": ["x64", "arm64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "category": "public.app-category.productivity"
     },
     "linux": {
       "target": [
-        { "target": "AppImage", "arch": ["x64"] }
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "category": "Utility"
     }
