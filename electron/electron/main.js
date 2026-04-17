@@ -71,9 +71,10 @@ async function installPythonDependencies(pythonCmd) {
     }
 
     log('Iniciando pip install...');
+    const projectRoot = path.join(backendPath, '..');
     const pipProcess = exec(
-      `${pythonCmd} -m pip install -r requirements.txt --quiet`,
-      { cwd: backendPath, maxBuffer: 20 * 1024 * 1024, timeout: 300000 },
+      `${pythonCmd} -m pip install -r backend/requirements.txt --quiet`,
+      { cwd: projectRoot, maxBuffer: 20 * 1024 * 1024, timeout: 300000 },
       (err, stdout, stderr) => {
         if (err) {
           return reject(new Error(
@@ -122,10 +123,14 @@ async function startBackend(pythonCmd) {
       ));
     }
 
-    log(`Spawning: ${pythonCmd} ${pythonScriptPath}`);
+    log(`Spawning: ${pythonCmd} -m backend.main_auth`);
 
-    backendProcess = spawn(pythonCmd, [pythonScriptPath], {
-      cwd: backendPath,
+    // O backend usa imports relativos, precisa ser executado como módulo
+    // cwd deve ser o pai do backend (a raiz do projeto)
+    const projectRoot = path.join(backendPath, '..');
+
+    backendProcess = spawn(pythonCmd, ['-m', 'backend.main_auth'], {
+      cwd: projectRoot,
       env: {
         ...process.env,
         OPENSLAP_HOST: BACKEND_HOST,
