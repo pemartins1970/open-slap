@@ -45,6 +45,16 @@ jobs:
           name: frontend-dist
           path: frontend/dist/
 
+      - name: Update Electron version from tag
+        run: |
+          # Extrair versão da tag (remover 'v' prefix)
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "Setting Electron version to: $VERSION"
+          # Atualizar package.json com a versão da tag
+          cd electron
+          npm version $VERSION --no-git-tag-version
+        shell: bash
+
       - name: Install Electron deps
         run: cd electron && npm install
         shell: bash
@@ -79,6 +89,15 @@ jobs:
           name: frontend-dist
           path: frontend/dist/
 
+      - name: Update Electron version from tag
+        run: |
+          # Extrair versão da tag (remover 'v' prefix)
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "Setting Electron version to: $VERSION"
+          # Atualizar package.json com a versão da tag
+          cd electron
+          npm version $VERSION --no-git-tag-version
+
       - name: Install Electron deps
         run: cd electron && npm install
 
@@ -110,6 +129,15 @@ jobs:
         with:
           name: frontend-dist
           path: frontend/dist/
+
+      - name: Update Electron version from tag
+        run: |
+          # Extrair versão da tag (remover 'v' prefix)
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "Setting Electron version to: $VERSION"
+          # Atualizar package.json com a versão da tag
+          cd electron
+          npm version $VERSION --no-git-tag-version
 
       - name: Install Electron deps
         run: cd electron && npm install
