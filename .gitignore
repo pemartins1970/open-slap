@@ -52,6 +52,9 @@ marketplace-mcps/
 arquivos.txt
 pytest.ini
 
+# Workspace files (local only)
+*.code-workspace
+
 # Local test files
 *.local
 test_*.py
