@@ -14,7 +14,7 @@ const BACKEND_URL = `http://${BACKEND_HOST}:${BACKEND_PORT}`;
 const HEALTH_CHECK_URL = `${BACKEND_URL}/health`;
 const isDev = !app.isPackaged;
 
-// Paths — resolves correctly for dev and packaged app
+// Paths
 const backendPath = app.isPackaged
   ? path.join(process.resourcesPath, 'backend')
   : path.join(app.getAppPath(), '..', 'backend');
@@ -22,9 +22,12 @@ const backendPath = app.isPackaged
 const pythonScriptPath = path.join(backendPath, 'main_auth.py');
 
 let mainWindow, splashWindow, backendProcess;
+let startupLog = [];
 
 function log(msg) {
-  console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
+  const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  console.log(line);
+  startupLog.push(line);
 }
 
 async function findPython() {
@@ -36,7 +39,7 @@ async function findPython() {
     candidates.forEach((cmd) => {
       exec(process.platform === 'win32' ? `where ${cmd}` : `which ${cmd}`, (err, stdout) => {
         checked++;
-        if (!err && !found) found = cmd;
+        if (!err && stdout.trim() && !found) found = cmd;
         if (checked === candidates.length) resolve(found);
       });
     });
@@ -45,65 +48,115 @@ async function findPython() {
 
 async function checkPythonVersion(pythonCmd) {
   return new Promise((resolve) => {
-    exec(`${pythonCmd} --version`, (err, stdout) => {
-      if (err) return resolve(null);
-      const match = stdout.match(/Python (\d+\.\d+)/);
-      resolve(match ? match[1] : null);
+    exec(`${pythonCmd} --version 2>&1`, (err, stdout, stderr) => {
+      const output = stdout || stderr || '';
+      const match = output.match(/Python (\d+\.\d+)/);
+      resolve(match ? match[1] : 'unknown');
     });
   });
-}
-
-async function waitForBackend(maxAttempts = 30, delayMs = 1000) {
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      await new Promise((resolve, reject) => {
-        http.get(HEALTH_CHECK_URL, (res) => {
-          res.statusCode === 200 ? resolve() : reject(new Error(`Status ${res.statusCode}`));
-        }).on('error', reject);
-      });
-      return;
-    } catch (err) {
-      log(`Health check ${i + 1}/${maxAttempts}: ${err.message}`);
-      if (i === maxAttempts - 1) throw new Error(`Backend failed to start after ${maxAttempts} attempts.`);
-      await new Promise((r) => setTimeout(r, delayMs));
-    }
-  }
 }
 
 async function installPythonDependencies(pythonCmd) {
   return new Promise((resolve, reject) => {
     const reqPath = path.join(backendPath, 'requirements.txt');
-    if (!fs.existsSync(reqPath)) return reject(new Error(`requirements.txt not found: ${reqPath}`));
+    log(`Backend path: ${backendPath}`);
+    log(`requirements.txt exists: ${fs.existsSync(reqPath)}`);
+    log(`main_auth.py exists: ${fs.existsSync(pythonScriptPath)}`);
+
+    if (!fs.existsSync(reqPath)) {
+      return reject(new Error(
+        `requirements.txt não encontrado em:\n${reqPath}\n\n` +
+        `Backend path: ${backendPath}`
+      ));
+    }
+
+    log('Iniciando pip install...');
     const pipProcess = exec(
-      `${pythonCmd} -m pip install -r requirements.txt`,
-      { cwd: backendPath, maxBuffer: 10 * 1024 * 1024 },
+      `${pythonCmd} -m pip install -r requirements.txt --quiet`,
+      { cwd: backendPath, maxBuffer: 20 * 1024 * 1024, timeout: 300000 },
       (err, stdout, stderr) => {
-        if (err) return reject(new Error(`pip install failed:\n${stderr || err.message}`));
+        if (err) {
+          return reject(new Error(
+            `pip install falhou:\n${stderr || err.message}\n\nBackend: ${backendPath}`
+          ));
+        }
+        log('pip install concluído');
         resolve();
       }
     );
-    pipProcess.stdout.on('data', (d) => log(`[pip] ${d.toString().trim()}`));
-    pipProcess.stderr.on('data', (d) => log(`[pip-err] ${d.toString().trim()}`));
+    pipProcess.stdout?.on('data', (d) => log(`[pip] ${d.toString().trim()}`));
+    pipProcess.stderr?.on('data', (d) => log(`[pip] ${d.toString().trim()}`));
   });
+}
+
+async function waitForBackend(maxAttempts = 60, delayMs = 2000) {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      await new Promise((resolve, reject) => {
+        const req = http.get(HEALTH_CHECK_URL, (res) => {
+          res.statusCode === 200 ? resolve() : reject(new Error(`HTTP ${res.statusCode}`));
+        });
+        req.on('error', reject);
+        req.setTimeout(3000, () => { req.destroy(); reject(new Error('timeout')); });
+      });
+      log('Backend health check OK');
+      return;
+    } catch (err) {
+      log(`Health check ${i + 1}/${maxAttempts}: ${err.message}`);
+      if (i === maxAttempts - 1) {
+        throw new Error(
+          `Backend não iniciou após ${maxAttempts} tentativas.\n\n` +
+          `Últimos logs:\n${startupLog.slice(-10).join('\n')}`
+        );
+      }
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
 }
 
 async function startBackend(pythonCmd) {
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(pythonScriptPath)) {
-      return reject(new Error(`main_auth.py not found: ${pythonScriptPath}`));
+      return reject(new Error(
+        `main_auth.py não encontrado em:\n${pythonScriptPath}`
+      ));
     }
+
+    log(`Spawning: ${pythonCmd} ${pythonScriptPath}`);
+
     backendProcess = spawn(pythonCmd, [pythonScriptPath], {
       cwd: backendPath,
-      env: { ...process.env, OPENSLAP_HOST: BACKEND_HOST, OPENSLAP_PORT: BACKEND_PORT, PYTHONUNBUFFERED: '1' },
+      env: {
+        ...process.env,
+        OPENSLAP_HOST: BACKEND_HOST,
+        OPENSLAP_PORT: String(BACKEND_PORT),
+        PYTHONUNBUFFERED: '1',
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+
     backendProcess.stdout.on('data', (d) => log(`[backend] ${d.toString().trim()}`));
     backendProcess.stderr.on('data', (d) => log(`[backend-err] ${d.toString().trim()}`));
-    backendProcess.on('error', (err) => reject(new Error(`Spawn error: ${err.message}`)));
+
+    backendProcess.on('error', (err) => {
+      reject(new Error(`Erro ao iniciar Python:\n${err.message}`));
+    });
+
+    backendProcess.on('exit', (code) => {
+      if (code !== 0 && code !== null) {
+        log(`Backend saiu com código ${code}`);
+      }
+    });
+
+    // Aguarda 3s para o processo iniciar, depois começa health checks
     setTimeout(async () => {
-      try { await waitForBackend(); resolve(); }
-      catch (err) { reject(err); }
-    }, 1500);
+      try {
+        await waitForBackend();
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    }, 3000);
   });
 }
 
@@ -159,7 +212,7 @@ function createMenu() {
       dialog.showMessageBox(mainWindow, {
         type: 'info', title: 'About Open Slap!',
         message: 'Open Slap! Desktop Assistant',
-        detail: 'Version 2.1.1\n\nhttps://github.com/pemartins1970/open-slap',
+        detail: `Version 2.1.1\n\nBackend: ${backendPath}\n\nhttps://github.com/pemartins1970/open-slap`,
       });
     }}]},
   ];
@@ -171,16 +224,25 @@ app.on('ready', async () => {
     createSplashWindow();
     createMenu();
 
-    const updateSplash = (msg) => splashWindow?.webContents.send('startup:status', msg);
+    const updateSplash = (msg) => {
+      log(msg);
+      splashWindow?.webContents.send('startup:status', msg);
+    };
 
     updateSplash('🔍 Procurando Python...');
     const pythonCmd = await findPython();
-    if (!pythonCmd) throw new Error('Python não encontrado. Instale Python 3.11+ e adicione ao PATH.');
+    if (!pythonCmd) {
+      throw new Error(
+        'Python não encontrado no PATH.\n\n' +
+        'Instale Python 3.11+ de https://www.python.org/downloads/\n' +
+        'e marque "Add Python to PATH" durante a instalação.'
+      );
+    }
 
     const version = await checkPythonVersion(pythonCmd);
-    updateSplash(`✓ Python ${version} encontrado`);
+    updateSplash(`✓ Python ${version} encontrado (${pythonCmd})`);
 
-    updateSplash('📦 Verificando dependências...');
+    updateSplash('📦 Instalando dependências Python...\n(pode demorar alguns minutos na primeira vez)');
     await installPythonDependencies(pythonCmd);
     updateSplash('✓ Dependências prontas');
 
