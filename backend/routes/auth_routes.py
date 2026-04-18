@@ -110,15 +110,18 @@ class PasswordResetConfirm(BaseModel):
 async def register(user: UserRegister):
     """Registra um novo usuário no sistema."""
     try:
+        logger.info(f"Tentando criar usuário: {user.email}")
         created_user = create_user(user.email, user.password)
+        logger.info(f"Usuário criado com sucesso: {created_user['id']}")
         return {
             "message": "Usuário criado com sucesso",
             "user": {"id": created_user["id"], "email": created_user["email"]},
         }
     except HTTPException as e:
+        logger.warning(f"HTTPException no registro: {e.detail}")
         raise e
     except Exception as e:
-        logger.exception("Unexpected error during user registration")
+        logger.exception(f"Erro inesperado no registro: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erro ao criar usuário: {str(e)}")
 
 @router.post("/login")

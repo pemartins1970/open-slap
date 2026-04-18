@@ -59,7 +59,8 @@ class AuthManager:
     def _ensure_database(self):
         """Garante que o banco de dados e tabela users existem"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-
+        print(f"[DEBUG] Ensuring database at: {self.db_path}")
+        
         with sqlite3.connect(self.db_path) as conn:
             # Apenas a tabela de usuários — conversations/messages ficam com db.py
             conn.execute("""
@@ -100,6 +101,13 @@ class AuthManager:
         """Cria novo usuário"""
         try:
             email = (email or "").strip().lower()
+            print(f"[DEBUG] Creating user: {email}")
+            print(f"[DEBUG] DB path: {self.db_path}")
+            print(f"[DEBUG] DB exists: {os.path.exists(self.db_path)}")
+            
+            # Ensure database and tables exist
+            self._ensure_database()
+            
             hashed_password = self.get_password_hash(password)
 
             with sqlite3.connect(self.db_path) as conn:
@@ -110,14 +118,21 @@ class AuthManager:
                 user_id = cursor.lastrowid
                 conn.commit()
 
+            print(f"[DEBUG] User created: {user_id}")
             return {
                 "id": user_id,
                 "email": email,
                 "created_at": datetime.now().isoformat(),
             }
-        except sqlite3.IntegrityError:
+        except sqlite3.IntegrityError as e:
+            print(f"[DEBUG] IntegrityError: {e}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Email já cadastrado"
+            )
+        except Exception as e:
+            print(f"[DEBUG] Unexpected error creating user: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Erro ao criar usuário: {str(e)}"
             )
 
     def authenticate_user(self, email: str, password: str) -> Optional[Dict[str, Any]]:
