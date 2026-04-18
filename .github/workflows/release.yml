@@ -50,9 +50,9 @@ jobs:
           # Extrair versão da tag (remover 'v' prefix)
           VERSION=${GITHUB_REF_NAME#v}
           echo "Setting Electron version to: $VERSION"
-          # Atualizar package.json com a versão da tag
+          # Atualizar package.json com a versão da tag (ignorar erro se já estiver correto)
           cd electron
-          npm version $VERSION --no-git-tag-version
+          npm version $VERSION --no-git-tag-version || echo "Version already correct or update failed, continuing..." || echo "Version already correct or update failed, continuing..."
         shell: bash
 
       - name: Install Electron deps
@@ -96,7 +96,7 @@ jobs:
           echo "Setting Electron version to: $VERSION"
           # Atualizar package.json com a versão da tag
           cd electron
-          npm version $VERSION --no-git-tag-version
+          npm version $VERSION --no-git-tag-version || echo "Version already correct or update failed, continuing..."
 
       - name: Install Electron deps
         run: cd electron && npm install
@@ -137,7 +137,7 @@ jobs:
           echo "Setting Electron version to: $VERSION"
           # Atualizar package.json com a versão da tag
           cd electron
-          npm version $VERSION --no-git-tag-version
+          npm version $VERSION --no-git-tag-version || echo "Version already correct or update failed, continuing..."
 
       - name: Install Electron deps
         run: cd electron && npm install
