@@ -10,10 +10,25 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-// Logo path: tenta caminho absoluto primeiro, fallback para relativo no Electron
-const OPEN_SLAP_LOGO_SRC = window.location.protocol === 'file:' 
-  ? './open_slap.png'  // Electron - arquivo local
-  : '/open_slap.png';  // Web - servidor
+// Logo path: detecta ambiente e usa caminho apropriado
+const getLogoSrc = () => {
+  // No Electron, tenta caminhos relativos ao app bundle
+  if (window.location.protocol === 'file:') {
+    // Caminhos possíveis no Electron empacotado
+    const possiblePaths = [
+      './open_slap.png',
+      '../open_slap.png',
+      '../../open_slap.png',
+      'open_slap.png'
+    ];
+    // Retorna o primeiro (mais provável)
+    return possiblePaths[0];
+  }
+  // Web - caminho absoluto do servidor
+  return '/open_slap.png';
+};
+
+const OPEN_SLAP_LOGO_SRC = getLogoSrc();
 
 const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetConfirm }) => {
   const [view, setView] = useState('auth');
