@@ -1,4 +1,4 @@
-# Changelog — Slap! (Público)
+# Changelog — Open Slap! (Público)
 
 Este arquivo lista mudanças por versão (o “o que mudou”). Para decisões, contexto e incidentes, ver `docs/DEV_JOURNAL.md`.
 
@@ -8,7 +8,7 @@ Este arquivo lista mudanças por versão (o “o que mudou”). Para decisões, 
 
 ### 🔧 Correções Pós-Instalação (Reportado por Eduardo)
 
-- **Nome do app**: Mantido como "Slap!" no package.json (produto é Slap!, não Slap!PRO)
+- **Nome do app**: Corrigido para "Open Slap!" no package.json (software é Open Slap!, desenvolvedor é Slap!)
 - **Logo splash**: Aumentada de 80px para 120px
 - **Logo login**: Corrigido caminho da imagem para funcionar no Electron (`./open_slap.png`)
 - **Erro no registro**: Backend agora retorna mensagem de erro detalhada para debug
