@@ -1,6 +1,6 @@
 {
   "name": "open-slap-desktop",
-  "version": "2.2.3",
+  "version": "2.2.4",
   "description": "Desktop-local agentic engine with real-time chat, multiple LLM providers, and controlled automation",
   "author": "Paulo Martins <pemartins1970@gmail.com>",
   "license": "Apache-2.0",
@@ -30,7 +30,7 @@
   },
   "build": {
     "appId": "com.openslap.desktop",
-    "productName": "Slap!",
+    "productName": "Slap!PRO",
     "directories": {
       "buildResources": "assets"
     },

@@ -10,7 +10,10 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-const OPEN_SLAP_LOGO_SRC = '/open_slap.png';
+// Logo path: tenta caminho absoluto primeiro, fallback para relativo no Electron
+const OPEN_SLAP_LOGO_SRC = window.location.protocol === 'file:' 
+  ? './open_slap.png'  // Electron - arquivo local
+  : '/open_slap.png';  // Web - servidor
 
 const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetConfirm }) => {
   const [view, setView] = useState('auth');
