@@ -918,3 +918,18 @@ export const translations = {
     create_new_skill: '创建新技能'
   }
 };
+
+// Helper para obter linguagem atual
+const _getLang = () => {
+  try {
+    const raw = localStorage.getItem('open_slap_lang_v1') || 'en';
+    return raw.toLowerCase().split('-')[0];
+  } catch { return 'en'; }
+};
+
+// Método t() para compatibilidade com uso existente
+translations.t = (key) => {
+  const lang = _getLang();
+  const table = translations[lang] || translations.en || translations.pt || {};
+  return table[key] ?? key;
+};

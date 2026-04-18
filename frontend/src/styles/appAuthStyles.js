@@ -1,4 +1,4 @@
-export function buildAppAuthStyles({ connected }) {
+export function buildAppAuthStyles({ connected } = {}) {
   return {
     app: {
       height: '100vh',

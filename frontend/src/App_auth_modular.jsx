@@ -234,6 +234,15 @@ const App = () => {
     testConnection(provider);
   };
 
+  // Controlar loading screen no index.html
+  useEffect(() => {
+    if (loading) {
+      document.body.classList.remove('loaded');
+    } else {
+      document.body.classList.add('loaded');
+    }
+  }, [loading]);
+
   // Renderização principal com layout modular
   return (
     <Router>
