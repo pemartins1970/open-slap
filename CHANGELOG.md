@@ -4,6 +4,60 @@ Este arquivo lista mudanças por versão (o “o que mudou”). Para decisões, 
 
 ---
 
+## v2.2.4 (18/04/2026)
+
+### 🔧 Correções de Dependências e Frontend (Reportado por Eduardo)
+
+**Problemas identificados no Electron empacotado:**
+- **Missing deps**: `email-validator` e `psutil` não estavam no `requirements.txt` (funcionava em dev, falhava no build)
+- **Frontend crash**: `translations.t is not a function` - método `.t()` adicionado ao objeto translations
+- **Styles crash**: `buildAppAuthStyles()` chamado sem argumento - default parameter adicionado
+- **Loading screen**: Tela de loading nunca sumia - useEffect para controlar classe `loaded` adicionado
+
+---
+
+## v2.2.3 (18/04/2026)
+
+### ✨ Rebrand e Correção de Backend
+
+- **Rebrand**: "Open Slap!" → "Slap!" (nome mais curto e memorável)
+- **Logo na splash**: Logo do produto adicionada à tela de loading
+- **Frase atualizada**: "Motor agêntico" → "Assistente Inteligente Local"
+- **Fix uvicorn**: Backend falhava ao importar `main_auth` como string - agora passa o objeto `app` diretamente
+- **Versão**: Bump para 2.2.3
+
+---
+
+## v2.2.2 (18/04/2026)
+
+### 📝 Diagnóstico Melhorado
+
+- **Log sempre salvo**: Diagnostic log agora é salvo em TODOS os cenários (sucesso, erro, timeout, exceção)
+- **Mensagens claras**: Erros agora mostram explicitamente onde o log foi salvo: `Desktop/openslap_backend_diagnostic.txt`
+- **Debug facilitado**: Usuários podem facilmente encontrar e enviar logs para análise
+
+---
+
+## v2.2.1 (17/04/2026)
+
+### 🔧 Fix do Workflow GitHub Actions
+
+- **Problema**: Build falhava no step "Update Electron version" quando versão já estava correta
+- **Solução**: Adicionado `|| echo "..."` para permitir que o workflow continue mesmo se `npm version` retornar erro
+- **Build**: Primeira versão com build multi-plataforma (Windows, macOS, Linux) funcionando
+
+---
+
+## v2.2.0 (17/04/2026)
+
+### 🔢 Correção de Versionamento
+
+- **Problema**: Tags como `v2.1.6.1` e `v2.1.6.2` (4 partes) são inválidas para `npm version`
+- **Solução**: Bump para `v2.2.0` (3 partes, formato semver válido)
+- **Nota**: Versão inicial do novo esquema de versionamento para releases do Electron
+
+---
+
 ## v2.1.3 (17/04/2026)
 
 ### Correções de Build e Versão
