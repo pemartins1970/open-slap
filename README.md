@@ -1,4 +1,4 @@
-# Open Slap! — Assistente Inteligente Local (v2.2.6)
+# Open Slap! — Assistente Inteligente Local (v2.2.7)
 
 [![Version](https://img.shields.io/badge/version-2.2.6-blue.svg)](https://github.com/pemartins1970/open-slap)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](https://python.org)
@@ -13,7 +13,7 @@ Open Slap! is a **desktop-local** assistant — a server running on your machine
 
 ---
 
-## What's in v2.1.1
+## What's in v2.2.7
 
 | Area | What exists |
 |------|-------------|
