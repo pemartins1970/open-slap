@@ -5646,7 +5646,7 @@ if __name__ == "__main__":
     should_reload = reload_env in {"1", "true", "yes", "on"}
     backend_dir = str(Path(__file__).resolve().parent)
     uvicorn.run(
-        "main_auth:app",
+        app,  # Passar objeto app diretamente em vez de string
         host=os.getenv("OPENSLAP_HOST", "127.0.0.1"),
         port=int(os.getenv("OPENSLAP_PORT", "5150")),
         reload=should_reload,

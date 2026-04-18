@@ -272,9 +272,9 @@ function createMenu() {
     ]},
     { label: 'Help', submenu: [{ label: 'About', click: () => {
       dialog.showMessageBox(mainWindow, {
-        type: 'info', title: 'About Open Slap!',
-        message: 'Open Slap! Desktop Assistant',
-        detail: `Version 2.1.1\n\nBackend: ${backendPath}\n\nhttps://github.com/pemartins1970/open-slap`,
+        type: 'info', title: 'About Slap!',
+        message: 'Slap! Desktop Assistant',
+        detail: `Version 2.2.3\n\nBackend: ${backendPath}\n\nhttps://github.com/pemartins1970/open-slap`,
       });
     }}]},
   ];
@@ -327,7 +327,7 @@ app.on('ready', async () => {
     log(`❌ ${err.message}`);
     saveDiagnosticLog(); // Salvar log completo na área de trabalho
     if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
-    dialog.showErrorBox('Erro ao iniciar Open Slap!', err.message + '\n\nLog de diagnóstico salvo em:\n' + require('os').homedir() + '\\Desktop\\openslap_backend_diagnostic.txt');
+    dialog.showErrorBox('Erro ao iniciar Slap!', err.message + '\n\nLog de diagnóstico salvo em:\n' + require('os').homedir() + '\\Desktop\\openslap_backend_diagnostic.txt');
     killBackend();
     app.quit();
   }
