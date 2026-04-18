@@ -4,8 +4,9 @@ Este arquivo lista mudanças por versão (o “o que mudou”). Para decisões, 
 
 ---
 
-## v2.2.5 (18/04/2026)
+## v2.2.7 (18/04/2026)
 
+### 🔧 Correção Final de Nomenclatura
 ### 🔧 Correções Pós-Instalação (Reportado por Eduardo)
 
 - **Nome do app**: Corrigido para "Open Slap!" no package.json (software é Open Slap!, desenvolvedor é Slap!)
