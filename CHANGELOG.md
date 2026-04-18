@@ -1,18 +1,17 @@
-# Changelog — Open Slap! (Público)
+# Changelog — Slap! (Público)
 
 Este arquivo lista mudanças por versão (o “o que mudou”). Para decisões, contexto e incidentes, ver `docs/DEV_JOURNAL.md`.
 
 ---
 
-## v2.2.4 (18/04/2026)
+## v2.2.5 (18/04/2026)
 
-### 🔧 Correções de Dependências e Frontend (Reportado por Eduardo)
+### 🔧 Correções Pós-Instalação (Reportado por Eduardo)
 
-**Problemas identificados no Electron empacotado:**
-- **Missing deps**: `email-validator` e `psutil` não estavam no `requirements.txt` (funcionava em dev, falhava no build)
-- **Frontend crash**: `translations.t is not a function` - método `.t()` adicionado ao objeto translations
-- **Styles crash**: `buildAppAuthStyles()` chamado sem argumento - default parameter adicionado
-- **Loading screen**: Tela de loading nunca sumia - useEffect para controlar classe `loaded` adicionado
+- **Nome do app**: Mantido como "Slap!" no package.json (produto é Slap!, não Slap!PRO)
+- **Logo splash**: Aumentada de 80px para 120px
+- **Logo login**: Corrigido caminho da imagem para funcionar no Electron (`./open_slap.png`)
+- **Erro no registro**: Backend agora retorna mensagem de erro detalhada para debug
 
 ---
 

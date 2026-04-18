@@ -1,4 +1,4 @@
-# Slap!PRO — Assistente Inteligente Local (v2.2.5)
+# Slap! — Assistente Inteligente Local (v2.2.5)
 
 [![Version](https://img.shields.io/badge/version-2.2.5-blue.svg)](https://github.com/pemartins1970/open-slap)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](https://python.org)
@@ -9,7 +9,7 @@
 
 > Backend: FastAPI (Python) · Frontend: React + Vite · License: [Apache 2.0](docs/LICENCE.md)
 
-Slap!PRO is a **desktop-local** assistant — a server running on your machine — with real-time chat, support for multiple LLM providers (local and free-tiers included), a full agentic team, and local automation with permissions.
+Slap! is a **desktop-local** assistant — a server running on your machine — with real-time chat, support for multiple LLM providers (local and free-tiers included), a full agentic team, and local automation with permissions.
 
 ---
 

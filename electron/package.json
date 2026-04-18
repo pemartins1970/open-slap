@@ -30,7 +30,7 @@
   },
   "build": {
     "appId": "com.openslap.desktop",
-    "productName": "Slap!PRO",
+    "productName": "Slap!",
     "directories": {
       "buildResources": "assets"
     },
