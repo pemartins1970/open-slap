@@ -118,6 +118,7 @@ async function waitForBackend(maxAttempts = 60, delayMs = 2000) {
     } catch (err) {
       log(`Health check ${i + 1}/${maxAttempts}: ${err.message}`);
       if (i === maxAttempts - 1) {
+        saveDiagnosticLog(); // Salvar log completo na área de trabalho
         throw new Error(
           `Backend não iniciou após ${maxAttempts} tentativas.\n\n` +
           `Últimos logs:\n${startupLog.slice(-10).join('\n')}`
@@ -318,10 +319,15 @@ app.on('ready', async () => {
       if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
     }, 2000);
 
+    // Salvar log de diagnóstico de sucesso também (para debug)
+    saveDiagnosticLog();
+    log(`✅ Startup completo! Log salvo em: ${require('os').homedir()}\\Desktop\\openslap_backend_diagnostic.txt`);
+
   } catch (err) {
     log(`❌ ${err.message}`);
+    saveDiagnosticLog(); // Salvar log completo na área de trabalho
     if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
-    dialog.showErrorBox('Erro ao iniciar Open Slap!', err.message);
+    dialog.showErrorBox('Erro ao iniciar Open Slap!', err.message + '\n\nLog de diagnóstico salvo em:\n' + require('os').homedir() + '\\Desktop\\openslap_backend_diagnostic.txt');
     killBackend();
     app.quit();
   }
@@ -332,5 +338,6 @@ app.on('before-quit', killBackend);
 
 process.on('uncaughtException', (err) => {
   log(`❌ Uncaught: ${err.message}`);
-  dialog.showErrorBox('Erro Fatal', err.message);
+  saveDiagnosticLog(); // Salvar log completo na área de trabalho
+  dialog.showErrorBox('Erro Fatal', err.message + '\n\nLog de diagnóstico salvo em:\n' + require('os').homedir() + '\\Desktop\\openslap_backend_diagnostic.txt');
 });
