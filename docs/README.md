@@ -1,4 +1,4 @@
-# Open Slap! — Motor agêntico desktop-local (v2.1.1)
+# Open Slap! — Motor agêntico desktop-local (v2.2.7)
 
 > Backend: FastAPI (Python) · Frontend: React + Vite · Licença: ver [docs/LICENCE.md](docs/LICENCE.md)
 
@@ -6,7 +6,7 @@ Open Slap! é um assistente **local** (servidor rodando na sua máquina) com cha
 
 ---
 
-## O que existe em v2.1
+## O que existe em v2.2.7
 
 | Área | O que existe |
 |------|-------------|
@@ -109,7 +109,7 @@ npm run build
 ---
 ---
 
-# Open Slap! — Desktop-local agentic engine (v2.1)
+# Open Slap! — Desktop-local agentic engine (v2.2.7)
 
 > Backend: FastAPI (Python) · Frontend: React + Vite · License: see [docs/LICENCE.md](docs/LICENCE.md)
 
