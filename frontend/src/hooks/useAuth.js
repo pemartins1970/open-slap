@@ -6,6 +6,13 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
+// Detectar se está rodando no Electron (protocolo file:)
+const isElectron = window.location.protocol === 'file:';
+const API_BASE_URL = isElectron ? 'http://127.0.0.1:5150' : '';
+
+// Helper para criar URLs completas
+const apiUrl = (path) => `${API_BASE_URL}${path}`;
+
 const useAuth = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -30,7 +37,7 @@ const useAuth = () => {
 
           let response = null;
           try {
-            response = await fetch('/auth/me', {
+            response = await fetch(apiUrl('/auth/me'), {
               headers: {
                 'Authorization': `Bearer ${savedToken}`,
                 'Content-Type': 'application/json'
@@ -63,7 +70,7 @@ const useAuth = () => {
   const login = useCallback(async (email, password) => {
     try {
       const normalizedEmail = (email || '').trim().toLowerCase();
-      const response = await fetch('/auth/login', {
+      const response = await fetch(apiUrl('/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: normalizedEmail, password })
@@ -89,7 +96,7 @@ const useAuth = () => {
     try {
       const normalizedEmail = (email || '').trim().toLowerCase();
       // 1. Criar o usuário
-      const response = await fetch('/auth/register', {
+      const response = await fetch(apiUrl('/auth/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: normalizedEmail, password })
@@ -112,7 +119,7 @@ const useAuth = () => {
   const requestPasswordReset = useCallback(async (email) => {
     try {
       const normalizedEmail = (email || '').trim().toLowerCase();
-      const response = await fetch('/auth/password-reset/request', {
+      const response = await fetch(apiUrl('/auth/password-reset/request'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: normalizedEmail })
@@ -130,7 +137,7 @@ const useAuth = () => {
   const confirmPasswordReset = useCallback(async (email, code, newPassword) => {
     try {
       const normalizedEmail = (email || '').trim().toLowerCase();
-      const response = await fetch('/auth/password-reset/confirm', {
+      const response = await fetch(apiUrl('/auth/password-reset/confirm'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: normalizedEmail, code, new_password: newPassword })
