@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-05-20T22:08:10.735836",
+  "session": "c8787c11-51ab-4c26-8a7d-27d7726e8f41",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.0-flash"
+  },
+  "input": "Sabrina? Estou aqui. Sem apresenta\u00e7\u00e3o/repeti\u00e7\u00e3o: fa\u00e7a s\u00f3 1\u20133 perguntas objetivas e conduza para os pr\u00f3ximos passos.",
+  "output": "\u274c Todos os providers est\u00e3o indispon\u00edveis. Verifique suas configura\u00e7\u00f5es de API.\nDetalhes: ollama: Can...",
+  "reward": 0.0
+}

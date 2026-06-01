@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-05-31T12:43:17.979271",
+  "session": "63296fd2-c193-4a70-86f1-9d9c06996c30",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "Fa\u00e7a uma pesquisa e levante os principais recursos de um portal de downloads atualmente. Depois, desenvolva o projeto de um portal em php especializado em downloads para windows (usaremos a ms store como download para a maioria).  Fa\u00e7a uma estimativa do petencial em receitas realista.",
+  "output": "Com certeza, P\u00ea! Que \u00f3tima ideia de projeto. Vou te ajudar a estruturar isso.\n\n[[add_step: Entender ...",
+  "reward": 0.0
+}

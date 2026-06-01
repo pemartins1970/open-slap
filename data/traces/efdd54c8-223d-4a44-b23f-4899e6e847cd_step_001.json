@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-05-29T21:20:54.661732",
+  "session": "efdd54c8-223d-4a44-b23f-4899e6e847cd",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "Sabrina? Pode se apresentar brevemente e me perguntar qual \u00e9 minha prioridade de hoje. Depois, conduza com 3 perguntas objetivas e proponha pr\u00f3ximos passos.",
+  "output": "Ol\u00e1! Sou Sabrina, sua assistente executiva de IA. Estou aqui para ajudar a simplificar sua rotina e ...",
+  "reward": 0.0
+}

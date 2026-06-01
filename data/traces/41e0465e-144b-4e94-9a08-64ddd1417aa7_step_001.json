@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-05-21T10:37:03.065586",
+  "session": "41e0465e-144b-4e94-9a08-64ddd1417aa7",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "Quero iniciar um novo projeto.",
+  "output": "\u274c Todos os providers est\u00e3o indispon\u00edveis. Verifique suas configura\u00e7\u00f5es de API.\nDetalhes: gemini: Sem...",
+  "reward": 0.0
+}

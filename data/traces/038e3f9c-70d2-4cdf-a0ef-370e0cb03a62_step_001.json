@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-06-01T00:06:29.490087",
+  "session": "038e3f9c-70d2-4cdf-a0ef-370e0cb03a62",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "fa\u00e7a uma pesquisa sobre os melhores frameworks PHP em 2025",
+  "output": "Com certeza! Fiz uma pesquisa sobre os frameworks PHP que devem continuar em destaque ou ganhar for\u00e7...",
+  "reward": 0.0
+}

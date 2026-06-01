@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-05-31T12:41:42.417343",
+  "session": "7b9cb893-4eae-4076-9455-e4cb5d03dec5",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "Quero iniciar um novo projeto.",
+  "output": "\u00d3tima iniciativa, P\u00ea! Fico feliz em ajudar a estruturar seu novo projeto. Para come\u00e7armos, preciso d...",
+  "reward": 0.0
+}

@@ -1,0 +1,118 @@
+              {agentConfigModal && settingsTab !== 'agent_config' ? (
+                <div style={styles.modalOverlay} onClick={() => setAgentConfigModal(null)}>
+                  <div style={{ ...styles.modal, maxWidth: '760px' }} onClick={(e) => e.stopPropagation()}>
+                    <div style={styles.modalHeader}>
+                      <div style={styles.modalTitle}>
+                        {`${t('configure')}: ${agentConfigModal?.expertName || agentConfigModal?.expertId || ''}`}
+                      </div>
+                      <button style={styles.iconButton} onClick={() => setAgentConfigModal(null)} title={t('close')}>×</button>
+                    </div>
+                    <div style={styles.modalBody}>
+                      <div style={{ display: 'grid', gap: '12px' }}>
+                        <div style={styles.settingsField}>
+                          <div style={styles.settingsLabel}>{t('agent_prompt')}</div>
+                          <textarea
+                            style={{ ...styles.settingsTextarea, minHeight: '140px' }}
+                            value={String(agentConfigModal?.prompt || '')}
+                            onChange={(e) => setAgentConfigModal((prev) => ({ ...(prev || {}), prompt: e.target.value }))}
+                            placeholder={t('agent_prompt_placeholder')}
+                          />
+                        </div>
+
+                        <div style={{ ...styles.settingsGrid, gridTemplateColumns: '1fr' }}>
+                          <div style={styles.settingsField}>
+                            <div style={styles.settingsLabel}>{t('default_skill')}</div>
+                            <select
+                              style={styles.settingsInput}
+                              value={String(agentConfigModal?.defaultSkillId || '')}
+                              onChange={(e) => setAgentConfigModal((prev) => ({ ...(prev || {}), defaultSkillId: e.target.value }))}
+                            >
+                              <option value="">{t('none')}</option>
+                              {(skills || []).map((s) => (
+                                <option key={s.id} value={s.id}>{getSkillDisplayName(s)}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div style={styles.settingsField}>
+                          <div style={styles.settingsLabel}>{t('agent_skills')}</div>
+                          <div style={{ display: 'grid', gap: '12px' }}>
+                            {(function() {
+                              const current = new Set(Array.isArray(agentConfigModal?.skillIds) ? agentConfigModal.skillIds : []);
+                              const grouped = groupBySegment(skills || [], getSkillSegmentId);
+                              const labelMap = {
+                                system: t('segment_system'),
+                                admin: t('segment_admin'),
+                                finance: t('segment_finance'),
+                                marketing: t('segment_marketing'),
+                                it_devops: t('segment_it_devops'),
+                                other: t('segment_other'),
+                              };
+                              return segmentOrder.map((seg) => {
+                                const list = sortSkillsForSegment((grouped?.[seg] || []), seg);
+                                if (!list.length) return null;
+                                return (
+                                  <div key={`agent-skill-seg-${seg}`} style={{ display: 'grid', gap: '8px' }}>
+                                    <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+                                      {labelMap[seg] || seg}
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '8px' }}>
+                                      {list.map((s) => {
+                                        const checked = current.has(s.id);
+                                        return (
+                                          <label
+                                            key={s.id}
+                                            style={{
+                                              display: 'flex',
+                                              alignItems: 'flex-start',
+                                              gap: '8px',
+                                              padding: '8px 10px',
+                                              borderRadius: '10px',
+                                              border: '1px solid var(--border)',
+                                              background: 'var(--bg3)',
+                                              cursor: 'pointer',
+                                              userSelect: 'none'
+                                            }}
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              checked={checked}
+                                              onChange={(e) => {
+                                                const next = new Set(Array.isArray(agentConfigModal?.skillIds) ? agentConfigModal.skillIds : []);
+                                                if (e.target.checked) next.add(s.id);
+                                                else next.delete(s.id);
+                                                setAgentConfigModal((prev) => ({ ...(prev || {}), skillIds: Array.from(next) }));
+                                              }}
+                                              style={{ marginTop: '2px' }}
+                                            />
+                                            <div style={{ minWidth: 0 }}>
+                                              <div style={{ fontSize: '12px', color: 'var(--text)', fontFamily: 'var(--sans)', fontWeight: 600 }}>
+                                                {getSkillDisplayName(s)}
+                                              </div>
+                                              {s.description ? (
+                                                <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--mono)', marginTop: '4px' }}>
+                                                  {getSkillDisplayDescription(s)}
+                                                </div>
+                                              ) : null}
+                                            </div>
+                                          </label>
+                                        );
+                                      })()}
+                            </div>
+                          ) : (
+                      <button
+                        style={{ ...styles.userButton, borderColor: 'var(--amber)', color: 'var(--amber)' }}
+                        onClick={() => setCenterView('settings')}
+                        title="Há itens de diagnóstico pendentes"
+                      >
+                        Doctor ⚠
+                      </button>
+                    )
+                  ) : null}
+                  <button style={styles.iconButton} onClick={() => setCenterView('settings')}>
+                    ⚙️
+                  </button>
+                  {signOutButton}
+                </div>
+              </div>

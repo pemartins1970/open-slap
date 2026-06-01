@@ -1,0 +1,15 @@
+{
+  "label": "pre_migration_003",
+  "created_at": "2026-05-19T23:11:17.980305+00:00",
+  "product": "open-slap",
+  "product_version": "unknown",
+  "schema_version": 2,
+  "trigger": "pre_migration_003",
+  "files": [
+    {
+      "path": "data/auth.db",
+      "sha256": "b5b5baf1e44455ec83624b543e760eac00b7078b755abdec53b64f2d454b0113"
+    }
+  ],
+  "restorable": true
+}

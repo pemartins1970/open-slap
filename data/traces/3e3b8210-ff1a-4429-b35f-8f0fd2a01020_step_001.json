@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-05-29T22:20:30.144000",
+  "session": "3e3b8210-ff1a-4429-b35f-8f0fd2a01020",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "Quero criar um site de downloads de freewares para windows em php. Pesquise e estruture a base do projeto.",
+  "output": "Com certeza! Para iniciar seu projeto de um site de downloads de freewares para Windows em PHP, vamo...",
+  "reward": 0.0
+}

@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-05-29T21:59:28.578429",
+  "session": "30f28d43-bd25-4336-9e82-2ec501c1d003",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "crie um componente react",
+  "output": "\u274c Todos os providers est\u00e3o indispon\u00edveis. Verifique suas configura\u00e7\u00f5es de API.\nDetalhes: ollama: Tim...",
+  "reward": 0.0
+}

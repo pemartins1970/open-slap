@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-05-28T23:37:13.716423",
+  "session": "a8d24a7c-b6cd-4a87-bb0d-155f44f0efc1",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "crie um componente React",
+  "output": "```jsx\nimport React from 'react';\n\nconst MyComponent = () => {\n  // Implement your component logic h...",
+  "reward": 0.0
+}
