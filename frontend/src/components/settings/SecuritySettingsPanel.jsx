@@ -216,7 +216,7 @@ export default function SecuritySettingsPanel({
             onClick={() => loadAutoApproveCommands({ silent: false })}
             disabled={autoApproveCommandsLoading}
           >
-            {autoApproveCommandsLoading ? t('loading') : t('refresh')}
+            {autoApproveCommandsLoading ? 'Loading...' : t('refresh')}
           </button>
         </div>
         <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)', lineHeight: 1.5 }}>
