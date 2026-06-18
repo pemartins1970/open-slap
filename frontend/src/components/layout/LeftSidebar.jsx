@@ -71,6 +71,37 @@ const LeftSidebar = ({
             </button>
           </div>
 
+          <div style={{ height: '12px' }} />
+          {navItems.map((item, idx) => {
+            const label = item.labelKey ? t(item.labelKey) : (item.label || item.key);
+            return (
+              <button
+                key={item.key}
+                style={{
+                  ...styles.sidebarButton,
+                  ...(centerView === item.key ? styles.sidebarButtonActive : {}),
+                  ...(hoverKey === item.key ? styles.sidebarButtonHover : {}),
+                  textAlign: isCollapsed ? 'center' : 'left',
+                  padding: isCollapsed ? '10px' : styles.sidebarButton.padding,
+                  justifyContent: isCollapsed ? 'center' : 'flex-start',
+                  ...(idx > 0 ? { marginTop: '8px' } : {})
+                }}
+                onMouseEnter={() => onHover && onHover(item.key)}
+                onMouseLeave={() => onHover && onHover('')}
+                onClick={() => {
+                  if (item.key === 'notes' && onSelectNote) {
+                    onSelectNote();
+                  } else {
+                    onNavigate(item.key);
+                  }
+                }}
+                title={label}
+              >
+                {item.icon}{isCollapsed ? '' : ` ${label}`}
+              </button>
+            );
+          })}
+
           {!isCollapsed && (
             <>
               <div style={{ height: '8px' }} />
@@ -132,37 +163,6 @@ const LeftSidebar = ({
               )}
             </div>
           )}
-
-          <div style={{ height: '12px' }} />
-          {navItems.map((item, idx) => {
-            const label = item.labelKey ? t(item.labelKey) : (item.label || item.key);
-            return (
-              <button
-                key={item.key}
-                style={{
-                  ...styles.sidebarButton,
-                  ...(centerView === item.key ? styles.sidebarButtonActive : {}),
-                  ...(hoverKey === item.key ? styles.sidebarButtonHover : {}),
-                  textAlign: isCollapsed ? 'center' : 'left',
-                  padding: isCollapsed ? '10px' : styles.sidebarButton.padding,
-                  justifyContent: isCollapsed ? 'center' : 'flex-start',
-                  ...(idx > 0 ? { marginTop: '8px' } : {})
-                }}
-                onMouseEnter={() => onHover && onHover(item.key)}
-                onMouseLeave={() => onHover && onHover('')}
-                onClick={() => {
-                  if (item.key === 'notes' && onSelectNote) {
-                    onSelectNote();
-                  } else {
-                    onNavigate(item.key);
-                  }
-                }}
-                title={label}
-              >
-                {item.icon}{isCollapsed ? '' : ` ${label}`}
-              </button>
-            );
-          })}
 
 
         </div>
