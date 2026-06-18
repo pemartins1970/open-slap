@@ -164,66 +164,31 @@ const LeftSidebar = ({
             );
           })}
 
-          {conversations.length > 0 && !isCollapsed && (
-            <div style={{ marginTop: '16px', borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
-              <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px', padding: '0 4px' }}>
-                {t('recent')}
-              </div>
-              {conversations.slice(0, 10).map((conv) => (
-                <button
-                  key={conv.id}
-                  type="button"
-                  onClick={() => onSelectConversation && onSelectConversation(conv.id)}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    background: currentConversation === conv.id ? 'var(--accent-bg)' : 'transparent',
-                    border: 'none',
-                    borderRadius: '4px',
-                    padding: '6px 8px',
-                    cursor: 'pointer',
-                    fontSize: '12px',
-                    color: 'var(--text)',
-                    textAlign: 'left',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    marginBottom: '2px'
-                  }}
-                  title={conv.title}
-                >
-                  {conv.title || t('new_conversation')}
-                </button>
-              ))}
-            </div>
-          )}
+
         </div>
       </div>
 
-      {onGoHome && (
-        <div style={styles.sidebarBottom}>
-          <div style={styles.sidebarFooter}>
-            <button
-              type="button"
-              onClick={onGoHome}
-              style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}
-              title="Tela inicial"
-            >
-              <img
-                src="/open_slap.png"
-                alt="Open Slap!"
-                style={{
-                  ...styles.sidebarLogo,
-                  width: isCollapsed ? '44px' : '100%',
-                  height: 'auto',
-                  maxHeight: '160px',
-                  maxWidth: '300px'
-                }}
-              />
-            </button>
-          </div>
+      <div style={styles.sidebarBottom}>
+        <div style={styles.sidebarFooter}>
+          <button
+            type="button"
+            onClick={onGoHome || (() => {})}
+            style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'default' }}
+          >
+            <img
+              src="/open_slap.png"
+              alt="Open Slap!"
+              style={{
+                ...styles.sidebarLogo,
+                width: isCollapsed ? '44px' : '100%',
+                height: 'auto',
+                maxHeight: '160px',
+                maxWidth: '300px'
+              }}
+            />
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 };
