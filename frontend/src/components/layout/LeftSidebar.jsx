@@ -91,7 +91,7 @@ const LeftSidebar = ({
                   textAlign: 'center'
                 }}
               >
-                + {t('new_conversation')}
+                {t('new_conversation')}
               </button>
             </>
           )}
