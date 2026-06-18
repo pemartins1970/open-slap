@@ -22,6 +22,7 @@ export default defineConfig({
     port: vitePort,
     strictPort: true,
     host: true, // Permite acesso externo
+    historyApiFallback: true,
     proxy: {
       // Proxy para API do backend
       '/api': {

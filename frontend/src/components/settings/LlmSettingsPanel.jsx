@@ -1,9 +1,16 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+
+const PROVIDER_LABELS = {
+  gemini: 'Gemini',
+  groq: 'Groq',
+  openai: 'OpenAI',
+  openrouter: 'OpenRouter',
+  ollama: 'Local',
+};
 
 export default function LlmSettingsPanel({
   styles,
-  t,
-  lang,
   settingsLoading,
   llmMode,
   setLlmMode,
@@ -33,61 +40,131 @@ export default function LlmSettingsPanel({
   providerStatusLoading,
   providerStatusError,
   loadProviderStatus,
+  activeProvider,
+  activeProviderLoading,
+  fetchActiveProvider,
+  runtimeLlmLabel,
 }) {
+  const { t } = useTranslation();
+  const activeProviderName = PROVIDER_LABELS[activeProvider?.provider] || activeProvider?.provider || '';
+  const savedProviderName = PROVIDER_LABELS[llmProvider] || llmProvider || '';
+  const providerMismatch = activeProvider?.provider && llmProvider && activeProvider.provider !== llmProvider;
+  const [providersOpen, setProvidersOpen] = useState(true);
+
   return (
     <>
-      <div style={styles.settingsSection}>
-        <div style={styles.settingsSectionTitle}>{t('configured_providers')}</div>
-        {providerStatusError ? (
-          <div style={styles.settingsError}>{providerStatusError}</div>
-        ) : null}
-        <div style={{ display: 'grid', gap: '6px', marginTop: '8px' }}>
-          {(providerStatusList || []).map((p) => {
-            const online = Boolean(p.online);
-            const enabled = Boolean(p.enabled);
-            const dotColor = enabled ? (online ? 'var(--green)' : 'var(--red)') : 'rgba(212,212,212,0.35)';
-            return (
-              <div
-                key={p.id || p.name}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  padding: '8px 0',
-                  borderBottom: '1px solid var(--border)',
-                  fontSize: '13px',
-                  fontFamily: 'var(--mono)'
-                }}
-              >
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
-                <span>{p.name || p.id}</span>
-                <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '999px', background: enabled ? 'rgba(245,166,35,0.12)' : 'rgba(212,212,212,0.10)', color: enabled ? 'var(--amber)' : 'var(--text-dim)' }}>
-                  {enabled ? t('provider_enabled') : t('provider_disabled')}
-                </span>
-                <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '999px', background: 'rgba(127,119,221,0.12)', color: '#7F77DD' }}>
-                  {t('provider_keys')}: {Number(p.keys_count) || 0}
-                </span>
-                <span style={{ marginLeft: 'auto', color: 'var(--text-dim)', fontSize: '11px' }}>
-                  {p.model || ''}
-                </span>
+      {activeProvider ? (
+        <div style={{
+          ...styles.settingsSection,
+          border: '1px solid rgba(127,119,221,0.3)',
+          background: 'rgba(127,119,221,0.06)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+            <div>
+              <div style={{ ...styles.settingsSectionTitle, margin: 0 }}>
+                {t('in_use_now')}
               </div>
-            );
-          })}
-          {!providerStatusLoading && (!providerStatusList || providerStatusList.length === 0) ? (
-            <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
-              {t('no_provider_status')}
+              <div style={{ fontSize: '13px', fontFamily: 'var(--mono)', marginTop: '4px' }}>
+                <span style={{ color: 'var(--amber)' }}>{activeProviderName}</span>
+                {activeProvider.model ? (
+                  <span style={{ color: 'var(--text-dim)' }}> — {activeProvider.model}</span>
+                ) : null}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' }}>
+                {activeProvider.has_key
+                  ? (activeProvider.inferred_from === 'user_settings' ? t('provider_configured_by_you') : t('provider_server_default'))
+                  : t('no_api_key_available')}
+                {activeProvider.fallback ? ` · ${t('fallback_active')}` : ''}
+              </div>
             </div>
-          ) : null}
+            <button
+              style={styles.settingsSecondaryButton}
+              onClick={fetchActiveProvider}
+              disabled={activeProviderLoading}
+            >
+              {activeProviderLoading ? '...' : t('update')}
+            </button>
+          </div>
         </div>
-        <div style={{ marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <button
-            style={styles.settingsSecondaryButton}
-            onClick={loadProviderStatus}
-            disabled={providerStatusLoading}
-          >
-            {providerStatusLoading ? 'Testando...' : 'Testar conexão'}
-          </button>
+      ) : null}
+
+      {providerMismatch ? (
+        <div style={{
+          ...styles.settingsSection,
+          border: '1px solid rgba(245,166,35,0.3)',
+          background: 'rgba(245,166,35,0.06)',
+        }}>
+          <div style={{ fontSize: '12px', fontFamily: 'var(--mono)', color: 'var(--amber)' }}>
+            {t('configured')}: {savedProviderName} · {t('in_use')}: {activeProviderName}
+          </div>
+          <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' }}>
+            {t('provider_not_available_fallback', { provider: activeProvider?.provider || runtimeLlmLabel })}
+          </div>
         </div>
+      ) : null}
+
+      <div style={styles.settingsSection}>
+        <div
+          onClick={() => setProvidersOpen(v => !v)}
+          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', userSelect: 'none' }}
+        >
+          <div style={styles.settingsSectionTitle}>{t('configured_providers')}</div>
+          <span style={{ fontSize: '10px', color: 'var(--text-dim)', transition: 'transform 0.15s', transform: providersOpen ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▾</span>
+        </div>
+        {providersOpen ? (
+          <>
+            {providerStatusError ? (
+              <div style={styles.settingsError}>{providerStatusError}</div>
+            ) : null}
+            <div style={{ display: 'grid', gap: '6px', marginTop: '8px' }}>
+              {(providerStatusList || []).map((p) => {
+                const online = Boolean(p.online);
+                const enabled = Boolean(p.enabled);
+                const dotColor = enabled ? (online ? 'var(--green)' : 'var(--red)') : 'rgba(212,212,212,0.35)';
+                return (
+                  <div
+                    key={p.id || p.name}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '8px 0',
+                      borderBottom: '1px solid var(--border)',
+                      fontSize: '13px',
+                      fontFamily: 'var(--mono)'
+                    }}
+                  >
+                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
+                    <span>{p.name || p.id}</span>
+                    <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '999px', background: enabled ? 'rgba(245,166,35,0.12)' : 'rgba(212,212,212,0.10)', color: enabled ? 'var(--amber)' : 'var(--text-dim)' }}>
+                      {enabled ? t('provider_enabled') : t('provider_disabled')}
+                    </span>
+                    <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '999px', background: 'rgba(127,119,221,0.12)', color: '#7F77DD' }}>
+                      {t('provider_keys')}: {Number(p.keys_count) || 0}
+                    </span>
+                    <span style={{ marginLeft: 'auto', color: 'var(--text-dim)', fontSize: '11px' }}>
+                      {p.model || ''}
+                    </span>
+                  </div>
+                );
+              })}
+              {!providerStatusLoading && (!providerStatusList || providerStatusList.length === 0) ? (
+                <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+                  {t('no_provider_status')}
+                </div>
+              ) : null}
+            </div>
+            <div style={{ marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                style={styles.settingsSecondaryButton}
+                onClick={loadProviderStatus}
+                disabled={providerStatusLoading}
+              >
+                {providerStatusLoading ? t('testing') : t('test_connection')}
+              </button>
+            </div>
+          </>
+        ) : null}
       </div>
 
       <div style={styles.settingsSection}>
@@ -170,7 +247,7 @@ export default function LlmSettingsPanel({
               style={styles.settingsInput}
               value={llmBaseUrl}
               onChange={(e) => setLlmBaseUrl(e.target.value)}
-              placeholder={llmMode === 'local' ? 'http://localhost:11434' : 'opcional'}
+              placeholder={llmMode === 'local' ? 'http://localhost:11434' : t('optional')}
               disabled={settingsLoading}
             />
           </div>

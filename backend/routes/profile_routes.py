@@ -11,6 +11,7 @@ from ..deps import (
     SoulInput,
     SoulEventInput,
     SystemProfileRefreshInput,
+    ExtractAndSaveInput,
 )
 from ..db import (
     get_user_system_profile,
@@ -20,6 +21,7 @@ from ..db import (
     upsert_user_soul,
     append_soul_event,
 )
+from ..soul_extractor import extract_soul_fields, save_to_soul
 from ..main_auth import get_current_user
 
 profile_router = APIRouter(prefix="/api", tags=["profile", "soul"])
@@ -155,8 +157,28 @@ async def append_soul_event_endpoint(
     append_soul_event(
         user_id=current_user["id"],
         source=payload.source,
-        event_type=payload.event_type,
         content=payload.content,
     )
     
     return {"ok": True}
+
+
+@profile_router.post("/soul/extract_and_save")
+async def extract_and_save_endpoint(
+    payload: ExtractAndSaveInput,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    """Extrai campos de perfil do texto de uma mensagem assistant e salva no SOUL."""
+    token = credentials.credentials
+    current_user = get_current_user(token)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    text = (payload.content or "").strip()
+    if not text:
+        return {"ok": True, "fields_extracted": []}
+
+    fields = extract_soul_fields(text)
+    save_to_soul(current_user["id"], fields, text)
+
+    return {"ok": True, "fields_extracted": list(fields.keys())}

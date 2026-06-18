@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-06-16T13:49:53.245816",
+  "session": "session_1781628556522_j8pnnjfva",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "teste",
+  "output": "Ol\u00e1! Sou a Sabrina, sua assistente pessoal de IA. Estou aqui para ajudar voc\u00ea com diversas tarefas e...",
+  "reward": 0.0
+}

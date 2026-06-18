@@ -125,6 +125,14 @@ class SoulEventInput(BaseModel):
     source: Optional[str] = None
 
 
+class ExtractAndSaveInput(BaseModel):
+    """Input para extrair e salvar informações do assistente no SOUL."""
+    content: str
+    conversation_id: Optional[int] = None
+    local_message_id: Optional[str] = None
+    message_id: Optional[int] = None
+
+
 class FeedbackInput(BaseModel):
     """Input para feedback de mensagem."""
     message_id: int
@@ -146,6 +154,7 @@ class PlanTaskStatusInput(BaseModel):
 class OrchestrationStartInput(BaseModel):
     """Input para iniciar orquestração."""
     auto_approve: bool = False
+    session_id: Optional[str] = None
 
 
 class ConnectorSecretInput(BaseModel):

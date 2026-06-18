@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-06-16T14:00:28.062123",
+  "session": "session_1781629150306_c4i1p0d5f",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "teste",
+  "output": "Ol\u00e1! Sabrina aqui. Estou pronta para ajudar....",
+  "reward": 0.0
+}

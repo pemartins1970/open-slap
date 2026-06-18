@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-06-06T10:03:47.218675",
+  "session": "95688283-769e-4da1-b795-609a1b647101",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "explica como funciona o sistema de rota\u00e7\u00e3o de chaves",
+  "output": "O sistema de rota\u00e7\u00e3o de chaves \u00e9 uma pr\u00e1tica de seguran\u00e7a essencial que envolve a troca regular e pr...",
+  "reward": 0.0
+}

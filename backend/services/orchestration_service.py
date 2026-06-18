@@ -38,6 +38,14 @@ class OrchestrationService:
         self.recovery_strategies = {}
         self.circuit_breakers = {}
     
+    def _is_cancelled(self, run_id: int) -> bool:
+        try:
+            from ..ws.orchestrator import ws_orchestrator
+            event = ws_orchestrator.cancel_events.get(str(run_id))
+            return event is not None and event.is_set()
+        except Exception:
+            return False
+
     async def execute_orchestration(
         self,
         run_id: int,
@@ -86,6 +94,12 @@ class OrchestrationService:
             
             # Processar cada tarefa
             for i, task in enumerate(pending):
+                if self._is_cancelled(run_id):
+                    _log(0, "cancelled", "Orquestração cancelada pelo usuário.")
+                    await _send_status("⏹️ Orquestração cancelada.")
+                    update_orchestration_run(run_id, "cancelled", log)
+                    return
+
                 task_id = task.get("id")
                 title = task.get("title", f"Tarefa {i+1}")
                 skill_id = task.get("skill_id")
@@ -96,7 +110,7 @@ class OrchestrationService:
                     
                     # Executar tarefa com self-healing
                     result = await self._execute_task_with_healing(
-                        task, user_id, parent_conversation_id, 
+                        run_id, task, user_id, parent_conversation_id, 
                         user_llm_override, websocket, _send_status
                     )
                     
@@ -123,6 +137,7 @@ class OrchestrationService:
     
     async def _execute_task_with_healing(
         self,
+        run_id: int,
         task: Dict[str, Any],
         user_id: int,
         parent_conversation_id: int,
@@ -140,7 +155,7 @@ class OrchestrationService:
         try:
             # Estratégia 1: Execução normal
             result = await self._execute_task_normal(
-                task, user_id, parent_conversation_id, user_llm_override
+                run_id, task, user_id, parent_conversation_id, user_llm_override, websocket
             )
             if result["success"]:
                 return result
@@ -150,7 +165,7 @@ class OrchestrationService:
             await asyncio.sleep(2)  # Backoff inicial
             
             result = await self._execute_task_normal(
-                task, user_id, parent_conversation_id, user_llm_override
+                run_id, task, user_id, parent_conversation_id, user_llm_override, websocket
             )
             if result["success"]:
                 return result
@@ -160,7 +175,7 @@ class OrchestrationService:
                 await _send_status(f"🔧 Usando skill general: {title}")
                 task["skill_id"] = "general"
                 result = await self._execute_task_normal(
-                    task, user_id, parent_conversation_id, user_llm_override
+                    run_id, task, user_id, parent_conversation_id, user_llm_override, websocket
                 )
                 if result["success"]:
                     return result
@@ -184,10 +199,12 @@ class OrchestrationService:
     
     async def _execute_task_normal(
         self,
+        run_id: int,
         task: Dict[str, Any],
         user_id: int,
         parent_conversation_id: int,
-        user_llm_override: Dict[str, Any]
+        user_llm_override: Dict[str, Any],
+        websocket: Optional[Callable] = None,
     ) -> Dict[str, Any]:
         """
         Execução normal da tarefa (extraída do main_auth.py)
@@ -225,19 +242,49 @@ class OrchestrationService:
             # Compor prompt da tarefa
             prompt = self._compose_task_prompt(title, task, user_context)
             
-            # Executar LLM (non-streaming para orquestração)
+            # Verificar se há agente registrado para este expert
+            from ..agents.base import agent_registry
+            registered_agent = agent_registry.get(
+                str(expert.get("id") or "").strip().lower()
+            )
+            
             full_response = ""
             expert_info = None
-            async for chunk in llm_manager.stream_generate(
-                prompt,
-                expert,
-                user_context=user_context,
-                llm_override=llm_override,
-            ):
-                if isinstance(chunk, str):
-                    full_response += chunk
-                else:
-                    expert_info = chunk
+            
+            if registered_agent:
+                # Usar agente registrado (QAAgent, POAgent, etc.)
+                async for chunk in registered_agent.stream_execute(
+                    intent=prompt,
+                    context={"combined_context": user_context, "expert": expert},
+                ):
+                    if self._is_cancelled(run_id):
+                        break
+                    if isinstance(chunk, str):
+                        full_response += chunk
+                        if websocket and chunk.strip():
+                            try:
+                                await websocket({"type": "chunk", "content": chunk})
+                            except Exception:
+                                pass
+            else:
+                # Fallback: LLM direto
+                async for chunk in llm_manager.stream_generate(
+                    prompt,
+                    expert,
+                    user_context=user_context,
+                    llm_override=llm_override,
+                ):
+                    if self._is_cancelled(run_id):
+                        break
+                    if isinstance(chunk, str):
+                        full_response += chunk
+                        if websocket and chunk.strip():
+                            try:
+                                await websocket({"type": "chunk", "content": chunk})
+                            except Exception:
+                                pass
+                    else:
+                        expert_info = chunk
             
             # Salvar resposta
             persisted_response = full_response.strip()
@@ -260,6 +307,21 @@ class OrchestrationService:
                     else None,
                 )
             
+            if self._is_cancelled(run_id):
+                update_plan_task_status(task_id, "cancelled")
+                return {"success": False, "task_id": task_id, "title": title, "error": "Cancelled"}
+
+            # Sinalizar fim da geração para esta tarefa
+            if websocket:
+                try:
+                    await websocket({
+                        "type": "done",
+                        "provider": (expert_info or {}).get("provider") if isinstance(expert_info, dict) else None,
+                        "model": (expert_info or {}).get("model") if isinstance(expert_info, dict) else None,
+                    })
+                except Exception:
+                    pass
+
             # Marcar tarefa como concluída
             update_plan_task_status(task_id, "done")
             

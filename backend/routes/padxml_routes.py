@@ -2,11 +2,13 @@
 📄 PadXML Routes - Endpoints para gerenciamento de PadXML
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi.responses import RedirectResponse
 from typing import List, Optional, Dict, Any
 
 from ..deps import security, HTTPAuthorizationCredentials
-from ..main_auth import get_current_user
+
+REDIRECT_URL = "/api/soul/extract_and_save"
 
 padxml_router = APIRouter(prefix="/api/padxml", tags=["padxml"])
 
@@ -20,9 +22,7 @@ async def list_software_endpoint(
     raise HTTPException(status_code=501, detail="PadXML não implementado")
 
 
-@padxml_router.post("/save_message")
-async def save_message_endpoint(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    """Salva uma mensagem no formato PadXML."""
-    raise HTTPException(status_code=501, detail="PadXML não implementado")
+@padxml_router.post("/save_message", status_code=308)
+async def save_message_redirect(request: Request):
+    """Rota legada — redireciona para /api/soul/extract_and_save."""
+    return RedirectResponse(url=REDIRECT_URL, status_code=308)

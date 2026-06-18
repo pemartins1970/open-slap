@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Literal
 from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -57,7 +57,7 @@ class ProjectUpdateInput(BaseModel):
     lessons_learned_json: Optional[str] = None
 
 class ProjectStatusInput(BaseModel):
-    status: str
+    status: Literal['draft', 'ativo', 'suspenso', 'encerrado', 'cancelado']
     suspension_reason: Optional[str] = None
 
 class ProjectRepositoryInput(BaseModel):

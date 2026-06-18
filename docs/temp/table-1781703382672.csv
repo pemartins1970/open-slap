@@ -1,0 +1,26 @@
+﻿Aspecto,Claude Desktop,Hermes Desktop,OpenClaw,Open Slap! v3
+**Modelo de negócio**,Proprietário,Open source (MIT),Open source,Open source (Apache 2.0)
+**Computer Use / Controle de tela**,"✅ (macOS, per-action)",❌ (browser only),❌,❌
+**Memória persistente**,✅,✅ (auto-evolutiva),✅,✅ (híbrida 4 camadas)
+**Multi-sessão paralela**,✅,✅ (sub-agentes),✅ (gateway),"⚠️ (estrutura existe, não ativa)"
+**Skills auto-criadas**,❌,✅,❌ (predefinidas),"❌ (17 built-in, não auto)"
+**Multi-plataforma mensagens**,❌,✅ (16+ gateways),N/D,❌ (Telegram only)
+**Agendamento**,✅ (Routines),✅ (cron natural),✅,❌
+**Execução remota/cloud**,❌,✅,✅,❌ (local-first)
+**Escolha de modelo LLM**,❌ (Anthropic only),✅ (200+),✅,✅ (5 providers)
+**Custo**,Planos pagos,Gratuito (API only),Gratuito,Gratuito
+**Orquestração multi-agente**,❌,❌,✅ (gateway),✅ (MoE visual)
+**Orquestração visual**,❌,❌,❌,✅ (blocos plano/aprovação)
+**UI desktop rica**,✅,❌ (minimalista),❌,✅ (Electron + React)
+**Local-first / offline**,❌,⚠️ (parcial),❌,✅ (Ollama)
+**Segurança documentada**,⚠️ (padrão),❌,❌,"✅ (B.E.N. 2.0, 78 testes)"
+**SOUL / perfil usuário**,❌,⚠️ (implícito),⚠️ (personas),✅ (soul\_extractor.py)
+**Acessível a não-devs**,✅,❌,⚠️,✅
+**i18n / multi-idioma**,⚠️ (~5),N/D,N/D,✅ (5 idiomas)
+**Temas customizáveis**,⚠️ (claro/escuro),N/D,N/D,✅ (8 temas)
+**MCP support**,✅,N/D,N/D,✅ (15+ integrações)
+**Testes automatizados**,❌,❌,❌,"✅ (125 testes, 100%)"
+**Gateway de mensagens**,❌,✅,N/D,⚠️ (Telegram)
+**Fallback chain LLM**,❌,✅,N/D,✅ (5 providers)
+**Sub-agentes paralelos**,❌,✅,✅,❌
+**Routines/async cloud**,✅,❌,❌,❌

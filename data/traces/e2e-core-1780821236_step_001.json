@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-06-07T05:33:58.314835",
+  "session": "e2e-core-1780821236",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "Responda com exatamente uma palavra: FUNCIONANDO",
+  "output": "FUNCIONANDO...",
+  "reward": 0.0
+}

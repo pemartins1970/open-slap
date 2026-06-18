@@ -8,7 +8,7 @@ import asyncio
 import time
 from datetime import datetime
 
-# Imports removidos - funções não existem
+from backend.chronicle import chronicle_health
 
 health_router = APIRouter(prefix="/health", tags=["health"])
 
@@ -23,7 +23,8 @@ async def health_check():
         "database": await _check_database(),
         "llm_providers": await _check_llm_providers(),
         "memory": await _check_memory_usage(),
-        "disk_space": await _check_disk_space()
+        "disk_space": await _check_disk_space(),
+        "chronicle": await _check_chronicle()
     }
     
     # Status geral
@@ -114,6 +115,18 @@ async def _check_memory_usage() -> Dict[str, Any]:
             "healthy": False,
             "error": str(e),
             "message": "Failed to check memory usage"
+        }
+
+
+async def _check_chronicle() -> Dict[str, Any]:
+    """Verifica saúde do subsistema Chronicle (memória de sessão)."""
+    try:
+        return chronicle_health()
+    except Exception as e:
+        return {
+            "healthy": False,
+            "error": str(e),
+            "message": "Chronicle check failed"
         }
 
 

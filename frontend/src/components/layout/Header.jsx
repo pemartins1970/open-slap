@@ -1,245 +1,104 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { useTranslation } from 'react-i18next';
 
-/**
- * Header - Cabeçalho principal da aplicação com navegação e controles.
- * 
- * @param {Object} props
- * @param {Object} props.styles - Estilos
- * @param {Object} props.user - Dados do usuário
- * @param {boolean} props.leftSidebarCollapsed - Se a sidebar esquerda está colapsada
- * @param {boolean} props.rightSidebarCollapsed - Se a sidebar direita está colapsada
- * @param {Function} props.onToggleLeftSidebar - Toggle da sidebar esquerda
- * @param {Function} props.onToggleRightSidebar - Toggle da sidebar direita
- * @param {boolean} props.isMobile - Se está em modo mobile
- * @param {Function} props.t - Função de tradução
- */
+const RPM_LIMITS = { gemini: 15, groq: 30, openrouter: 10, openai: 3, ollama: 0 };
+
+const rpMeter = (recentRpm, activeProvider, runtimeLlmLabel, isMobile) => {
+  const provider = (activeProvider?.provider || runtimeLlmLabel || '').toLowerCase();
+  const limit = Object.entries(RPM_LIMITS).find(([k]) => provider.includes(k))?.[1] ?? 15;
+  if (limit === 0) return null;
+  const pct = Math.min(1, recentRpm / limit);
+  const color = pct < 0.5 ? 'var(--green)' : pct < 0.8 ? 'var(--amber)' : '#e55';
+  const label = `${recentRpm}/${limit} req/min`;
+  return (
+    <div title={label} style={{ display: 'flex', alignItems: 'center', gap: '5px', cursor: 'default', margin: '0 8px' }}>
+      <div style={{ width: '52px', height: '4px', background: 'var(--bg-panel)', borderRadius: '2px', overflow: 'hidden', border: '1px solid var(--border)' }}>
+        <div style={{ width: `${pct * 100}%`, height: '100%', background: color, transition: 'width 0.4s ease, background-color 0.4s ease', borderRadius: '2px' }} />
+      </div>
+      {!isMobile && (
+        <span style={{ fontFamily: 'var(--mono)', fontSize: '10px', color, minWidth: '32px', transition: 'color 0.4s ease' }}>
+          {recentRpm}/{limit}
+        </span>
+      )}
+    </div>
+  );
+};
+
 const Header = ({
   styles,
   user,
   leftSidebarCollapsed,
-  rightSidebarCollapsed,
   onToggleLeftSidebar,
-  onToggleRightSidebar,
   isMobile,
-  t
+  onSettingsClick,
+  runtimeLlmLabel,
+  connected,
+  onLogout,
+  // monolith extensions
+  mobileSidebarOpen,
+  onToggleMobileSidebar,
+  recentRpm = 0,
+  activeProvider,
+  savedLlmProvider,
+  doctorReport,
+  onDoctorClick
 }) => {
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false);
-
-  const handleUserMenuToggle = () => {
-    setShowUserMenu(!showUserMenu);
-    setShowNotifications(false);
-  };
-
-  const handleNotificationsToggle = () => {
-    setShowNotifications(!showNotifications);
-    setShowUserMenu(false);
-  };
-
-  const handleClickOutside = () => {
-    setShowUserMenu(false);
-    setShowNotifications(false);
-  };
+  const { t } = useTranslation();
 
   return (
-    <>
-      <div style={{...styles.header, width: '100%'}}>
-        {/* Left Section */}
-        <div style={styles.headerLeft}>
-          {/* Logo */}
-          <div style={styles.headerLogo}>
-            <img src="/open_slap.png" alt="Open Slap" style={{width: '32px', height: '32px', objectFit: 'contain'}} />
-          </div>
-
-          {/* Sidebar Toggle */}
-          <button
-            style={styles.headerButton}
-            onClick={onToggleLeftSidebar}
-            title={leftSidebarCollapsed ? 'Show Sidebar' : 'Hide Sidebar'}
-          >
-            {leftSidebarCollapsed ? '»' : '«'}
-          </button>
+    <div style={styles.header}>
+      <div style={styles.headerTitle} className="slap-header-title">{t('app_title')}</div>
+      <div style={styles.headerRight}>
+        <button
+          className="slap-sidebar-toggle"
+          style={{
+            background: 'none',
+            border: '1px solid var(--border)',
+            borderRadius: '6px',
+            padding: '6px 10px',
+            color: 'var(--text)',
+            cursor: 'pointer',
+            fontSize: '16px',
+            display: isMobile ? 'inline-flex' : 'none',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+          onClick={() => onToggleMobileSidebar ? onToggleMobileSidebar() : onToggleLeftSidebar()}
+          title="Menu"
+        >
+          {mobileSidebarOpen ? '✕' : '☰'}
+        </button>
+        <div style={{ ...styles.connectionStatus, display: isMobile ? 'none' : styles.connectionStatus.display }} className="slap-conn-status">
+          <div style={styles.connectionDot}></div>
+          {connected ? (() => {
+            const configured = savedLlmProvider?.toLowerCase().trim() || '';
+            const ap = activeProvider?.provider || '';
+            const primary = configured || ap;
+            const rl = runtimeLlmLabel || '';
+            const rlProvider = rl.split(' — ')[0].trim().toLowerCase();
+            const showRuntime = rl && primary && rlProvider !== primary.toLowerCase();
+            if (primary && showRuntime) return `${t('connected')} — ${primary} (runtime: ${rl})`;
+            if (primary) return `${t('connected')} — ${primary}`;
+            if (rl) return `${t('connected')} — ${rl}`;
+            return t('connected');
+          })() : t('disconnected')}
         </div>
-
-        {/* Center Section - Omni-Search */}
-        <div style={styles.headerCenter}>
-          {/* Search Bar */}
-          <div style={styles.headerSearch}>
-            <input
-              style={styles.searchInput}
-              type="text"
-              placeholder={t ? t('search_placeholder') : 'Search...'}
-            />
-            <button style={styles.searchButton}>
-              {t ? t('search') : 'Search'}
-            </button>
-          </div>
-        </div>
-
-        {/* Right Section */}
-        <div style={styles.headerRight}>
-          {/* Notifications */}
-          <div style={styles.headerNotifications}>
-            <button
-              style={styles.headerButton}
-              onClick={handleNotificationsToggle}
-              title={t ? t('notifications') : 'Notifications'}
-            >
-              <span style={styles.notificationIcon}>?</span>
-              <span style={styles.notificationBadge}>3</span>
-            </button>
-          </div>
-
-          {/* User Menu */}
-          <div style={styles.headerUser}>
-            <button
-              style={styles.userButton}
-              onClick={handleUserMenuToggle}
-              title={t ? t('user_menu') : 'User Menu'}
-            >
-              <div style={styles.userAvatar}>
-                {user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || 'U'}
-              </div>
-              <span style={styles.userName}>
-                {user?.name || user?.email || 'User'}
-              </span>
-              <span style={styles.userDropdown}>v</span>
-            </button>
-          </div>
-
-          {/* Right Sidebar Toggle */}
-          <button
-            style={styles.headerButton}
-            onClick={onToggleRightSidebar}
-            title={rightSidebarCollapsed ? 'Show Right Panel' : 'Hide Right Panel'}
-          >
-            {rightSidebarCollapsed ? '«' : '»'}
-          </button>
-        </div>
+        {connected && rpMeter(recentRpm, activeProvider, runtimeLlmLabel, isMobile)}
+        {doctorReport && doctorReport.ok === false ? (
+          isMobile ? (
+            <button style={{ ...styles.iconButton, color: 'var(--amber)' }} onClick={onDoctorClick} title="Há itens de diagnóstico pendentes">⚠</button>
+          ) : (
+            <button style={{ ...styles.userButton, borderColor: 'var(--amber)', color: 'var(--amber)' }} onClick={onDoctorClick} title="Há itens de diagnóstico pendentes">Doctor ⚠</button>
+          )
+        ) : null}
+        <button style={styles.iconButton} onClick={onSettingsClick}>⚙️</button>
+        {isMobile ? (
+          <button style={styles.iconButton} onClick={onLogout} title={t('sign_out')}>⎋</button>
+        ) : (
+          <button style={styles.userButton} onClick={onLogout}>{user?.email} → {t('sign_out')}</button>
+        )}
       </div>
-
-      {/* User Menu Dropdown */}
-      {showUserMenu && (
-        <div style={styles.dropdownMenu}>
-          <div style={styles.dropdownHeader}>
-            <div style={styles.userInfo}>
-              <div style={styles.userAvatarLarge}>
-                {user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || 'U'}
-              </div>
-              <div style={styles.userDetails}>
-                <div style={styles.userFullName}>
-                  {user?.name || 'User'}
-                </div>
-                <div style={styles.userEmail}>
-                  {user?.email || 'user@example.com'}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div style={styles.dropdownContent}>
-            <button style={styles.dropdownItem}>
-              {t ? t('profile') : 'Profile'}
-            </button>
-            <button style={styles.dropdownItem}>
-              {t ? t('settings') : 'Settings'}
-            </button>
-            <button style={styles.dropdownItem}>
-              {t ? t('preferences') : 'Preferences'}
-            </button>
-            <div style={styles.dropdownSeparator} />
-            <button style={styles.dropdownItem}>
-              {t ? t('help') : 'Help'}
-            </button>
-            <button style={styles.dropdownItem}>
-              {t ? t('about') : 'About'}
-            </button>
-            <div style={styles.dropdownSeparator} />
-            <button style={{...styles.dropdownItem, ...styles.dropdownItemDanger}}>
-              {t ? t('logout') : 'Logout'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Notifications Dropdown */}
-      {showNotifications && (
-        <div style={styles.dropdownMenu}>
-          <div style={styles.dropdownHeader}>
-            <h4 style={styles.dropdownTitle}>
-              {t ? t('notifications') : 'Notifications'}
-            </h4>
-          </div>
-
-          <div style={styles.dropdownContent}>
-            <div style={styles.notificationItem}>
-              <div style={styles.notificationIcon}>
-                <span style={styles.notificationTypeIcon}>!</span>
-              </div>
-              <div style={styles.notificationContent}>
-                <div style={styles.notificationTitle}>
-                  {t ? t('system_update') : 'System Update'}
-                </div>
-                <div style={styles.notificationMessage}>
-                  {t ? t('new_version_available') : 'A new version is available'}
-                </div>
-                <div style={styles.notificationTime}>
-                  2 {t ? t('hours_ago') : 'hours ago'}
-                </div>
-              </div>
-            </div>
-
-            <div style={styles.notificationItem}>
-              <div style={styles.notificationIcon}>
-                <span style={styles.notificationTypeIcon}>?</span>
-              </div>
-              <div style={styles.notificationContent}>
-                <div style={styles.notificationTitle}>
-                  {t ? t('task_completed') : 'Task Completed'}
-                </div>
-                <div style={styles.notificationMessage}>
-                  {t ? t('task_finished_successfully') : 'Task finished successfully'}
-                </div>
-                <div style={styles.notificationTime}>
-                  5 {t ? t('minutes_ago') : 'minutes ago'}
-                </div>
-              </div>
-            </div>
-
-            <div style={styles.notificationItem}>
-              <div style={styles.notificationIcon}>
-                <span style={styles.notificationTypeIcon}>×</span>
-              </div>
-              <div style={styles.notificationContent}>
-                <div style={styles.notificationTitle}>
-                  {t ? t('error_occurred') : 'Error Occurred'}
-                </div>
-                <div style={styles.notificationMessage}>
-                  {t ? t('failed_to_execute_command') : 'Failed to execute command'}
-                </div>
-                <div style={styles.notificationTime}>
-                  1 {t ? t('hour_ago') : 'hour ago'}
-                </div>
-              </div>
-            </div>
-
-            <div style={styles.dropdownFooter}>
-              <button style={styles.dropdownItem}>
-                {t ? t('view_all_notifications') : 'View All Notifications'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Overlay for mobile */}
-      {(showUserMenu || showNotifications) && (
-        <div
-          style={styles.dropdownOverlay}
-          onClick={handleClickOutside}
-        />
-      )}
-    </>
+    </div>
   );
 };
 

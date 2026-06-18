@@ -1225,6 +1225,21 @@ class DatabaseManager:
             conn.commit()
             return bool(cur.rowcount)
 
+    def rename_conversation_if_default(
+        self, conversation_id: int, user_id: int, new_title: str, default_title: str
+    ) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute(
+                """
+                UPDATE conversations
+                SET title = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ? AND title = ?
+            """,
+                (_redact_text(new_title) or "", conversation_id, user_id, default_title),
+            )
+            conn.commit()
+            return bool(cur.rowcount)
+
     def search_user_messages(
         self,
         user_id: int,
@@ -3231,6 +3246,9 @@ class DatabaseManager:
             
             return [dict(row) for row in rows]
 
+    VALID_NOTE_CATEGORIES = {'nota', 'ideia_solta', 'ideacao', 'projeto_futuro'}
+    VALID_NOTE_SOURCES = {'user', 'agent'}
+
     def create_note(
         self,
         user_id: int,
@@ -3241,6 +3259,10 @@ class DatabaseManager:
         category: str = 'nota',
         source: str = 'user',
     ) -> int:
+        if category and category not in self.VALID_NOTE_CATEGORIES:
+            raise ValueError(f"category inválido: {category!r}")
+        if source and source not in self.VALID_NOTE_SOURCES:
+            raise ValueError(f"source inválido: {source!r}")
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 """
@@ -3263,6 +3285,10 @@ class DatabaseManager:
         category: Optional[str] = None,
         source: Optional[str] = None,
     ) -> bool:
+        if category is not None and category not in self.VALID_NOTE_CATEGORIES:
+            raise ValueError(f"category inválido: {category!r}")
+        if source is not None and source not in self.VALID_NOTE_SOURCES:
+            raise ValueError(f"source inválido: {source!r}")
         fields = ["title = ?", "content_md = ?", "tags = ?", "project_id = ?", "updated_at = CURRENT_TIMESTAMP"]
         params = [title, content_md, tags, project_id]
         if category is not None:
@@ -4250,4 +4276,9 @@ def list_notes_by_category(
     project_id: int = None, limit: int = 50
 ) -> List[Dict[str, Any]]:
     return db_manager.list_notes_by_category(user_id, category, project_id=project_id, limit=limit)
+
+
+def rename_conversation_if_default(conversation_id: int, user_id: int, new_title: str, default_title: str) -> bool:
+    """Renomeia conversa apenas se o título atual ainda for o default (não houve rename manual)."""
+    return db_manager.rename_conversation_if_default(conversation_id, user_id, new_title, default_title)
 

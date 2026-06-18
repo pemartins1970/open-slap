@@ -256,6 +256,8 @@ from .routes.referral_routes import referral_router
 from .routes.marketplace_routes import marketplace_router
 from .routes.notes_routes import notes_router
 from .routes.wiki_routes import wiki_router
+from .routes.llm_active import router as llm_active_router
+from .routes.models import router as models_router
 
 
 # Serviços
@@ -4756,6 +4758,7 @@ def _build_soul_markdown(
         ("Faixa etária", "age_range"),
         ("Sexo", "gender"),
         ("Escolaridade", "education"),
+        ("Linguagem de programação", "programming_language"),
         ("Interesses", "interests"),
         ("Objetivos", "goals"),
         ("Preferências de aprendizado", "learning_style"),
@@ -5119,6 +5122,8 @@ app.include_router(referral_router)
 app.include_router(marketplace_router)
 app.include_router(notes_router)
 app.include_router(wiki_router)
+app.include_router(llm_active_router)
+app.include_router(models_router)
 
 
 
@@ -5650,7 +5655,10 @@ if _FRONTEND_DIST.exists():
                 {"detail": "Frontend não buildado. Rode: npm run build"},
                 status_code=503,
             )
-        return FileResponse(str(index))
+        return FileResponse(
+            str(index),
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
 
 
 # MCP Loader - Carrega MCPs ativos no boot

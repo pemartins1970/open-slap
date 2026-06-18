@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-06-07T17:07:52.520284",
+  "session": "745cd00a-7bf7-4383-b0be-afec97557706",
+  "step": 2,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "Me explique o que \u00e9 o open slap!, para que serve e como posso melhor\u00e1-lo.",
+  "output": "\u274c Todos os providers est\u00e3o indispon\u00edveis. Verifique suas configura\u00e7\u00f5es de API.\nDetalhes: gemini: Gem...",
+  "reward": 0.0
+}

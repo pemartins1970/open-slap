@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-06-03T20:02:14.039697",
+  "session": "459ce977-6316-4a92-834c-2f6f13d1d278",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "preciso de um plano de testes para o endpoint /api/settings/llm",
+  "output": "\u274c Todos os providers est\u00e3o indispon\u00edveis. Verifique suas configura\u00e7\u00f5es de API.\nDetalhes: ollama: Tim...",
+  "reward": 0.0
+}

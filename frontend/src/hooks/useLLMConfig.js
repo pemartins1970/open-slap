@@ -77,7 +77,7 @@ export const useLLMConfig = (getAuthHeaders, t) => {
         return;
       }
 
-      const response = await fetch('/api/settings/llm/provider_keys', { headers });
+      const response = await fetch('/api/settings/llm/keys', { headers });
 
       if (!response.ok) {
         throw new Error('Failed to load provider keys');

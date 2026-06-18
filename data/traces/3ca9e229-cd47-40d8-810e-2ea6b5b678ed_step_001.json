@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-06-08T18:57:03.115107",
+  "session": "3ca9e229-cd47-40d8-810e-2ea6b5b678ed",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "planeje a refatora\u00e7\u00e3o do arquivo X com 3 tarefas",
+  "output": "Com certeza! Para planejar a refatora\u00e7\u00e3o, preciso saber qual \u00e9 o arquivo \"X\" que voc\u00ea gostaria de re...",
+  "reward": 0.0
+}

@@ -26,6 +26,8 @@ export const useSettings = (getAuthHeaders, t) => {
   const [providerStatusList, setProviderStatusList] = useState([]);
   const [providerStatusLoading, setProviderStatusLoading] = useState(false);
   const [providerStatusError, setProviderStatusError] = useState('');
+  const [activeProvider, setActiveProvider] = useState(null);
+  const [activeProviderLoading, setActiveProviderLoading] = useState(false);
 
   /**
    * Salva idioma
@@ -116,20 +118,47 @@ export const useSettings = (getAuthHeaders, t) => {
         return;
       }
 
-      const response = await fetch('/api/settings/llm/provider_status', { headers });
+      const response = await fetch('/api/providers', { headers });
 
       if (!response.ok) {
         throw new Error('Failed to load provider status');
       }
 
       const data = await response.json();
-      setProviderStatusList(Array.isArray(data?.providers) ? data.providers : []);
+      const providersObj = data?.providers || {};
+      const list = Object.entries(providersObj).map(([id, info]) => ({
+        id,
+        name: info.name || id,
+        online: Boolean(info.online),
+        enabled: Boolean(info.enabled),
+        model: info.model || '',
+        keys_count: info.keys_count || 0,
+      }));
+      setProviderStatusList(list);
     } catch (error) {
       console.error('Error loading provider status:', error);
       setProviderStatusError('Failed to load provider status');
       setProviderStatusList([]);
     } finally {
       setProviderStatusLoading(false);
+    }
+  }, [getAuthHeaders]);
+
+  /**
+   * Carrega provider ativo (sem chamada LLM)
+   */
+  const fetchActiveProvider = useCallback(async () => {
+    try {
+      setActiveProviderLoading(true);
+      const headers = getAuthHeaders();
+      if (!headers.Authorization) return;
+      const response = await fetch('/api/llm/active', { headers });
+      if (!response.ok) return;
+      const data = await response.json();
+      setActiveProvider(data);
+    } catch {
+    } finally {
+      setActiveProviderLoading(false);
     }
   }, [getAuthHeaders]);
 
@@ -238,6 +267,9 @@ export const useSettings = (getAuthHeaders, t) => {
     providerStatusList,
     providerStatusLoading,
     providerStatusError,
+    activeProvider,
+    activeProviderLoading,
+    fetchActiveProvider,
 
     // Setters
     setLang,

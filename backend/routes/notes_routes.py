@@ -3,7 +3,7 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Literal
 from pydantic import BaseModel
 
 from ..deps import security, HTTPAuthorizationCredentials
@@ -26,8 +26,8 @@ class NoteCreateInput(BaseModel):
     content_md: str
     tags: Optional[str] = None
     project_id: Optional[int] = None
-    category: Optional[str] = 'nota'
-    source: Optional[str] = 'user'
+    category: Optional[Literal['nota', 'ideia_solta', 'ideacao', 'projeto_futuro']] = 'nota'
+    source: Optional[Literal['user', 'agent']] = 'user'
 
 
 class NoteUpdateInput(BaseModel):
@@ -35,8 +35,8 @@ class NoteUpdateInput(BaseModel):
     content_md: str
     tags: Optional[str] = None
     project_id: Optional[int] = None
-    category: Optional[str] = None
-    source: Optional[str] = None
+    category: Optional[Literal['nota', 'ideia_solta', 'ideacao', 'projeto_futuro']] = None
+    source: Optional[Literal['user', 'agent']] = None
 
 
 @notes_router.get("")

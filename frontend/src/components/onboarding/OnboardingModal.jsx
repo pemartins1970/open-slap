@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-
-/* ─── Constants ─── */
+import { useTranslation } from 'react-i18next';
 
 const LANGUAGES = [
   { id: 'pt', label: 'Português', flag: '🇧🇷' },
@@ -38,9 +37,7 @@ const GOAL_KEYS = [
   'goal_creativity', 'goal_other'
 ];
 
-const TOTAL_STEPS = 4; // 0..3
-
-/* ─── Local styles (design system) ─── */
+const TOTAL_STEPS = 4;
 
 const S = {
   overlay: {
@@ -86,7 +83,6 @@ const S = {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
     gap: '12px'
   },
-  /* Progress */
   progressBar: {
     display: 'flex', gap: '8px', alignItems: 'center',
     marginBottom: '20px'
@@ -96,7 +92,6 @@ const S = {
     background: active ? 'var(--accent)' : 'rgba(255,255,255,0.08)',
     transition: 'background 0.3s'
   }),
-  /* Nav buttons */
   btnPrimary: {
     background: 'var(--accent)', border: 'none',
     borderRadius: '8px', padding: '10px 24px',
@@ -112,7 +107,6 @@ const S = {
     fontFamily: 'var(--mono)', cursor: 'pointer',
     transition: 'all 0.15s', minWidth: '100px'
   },
-  /* Language grid */
   langGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
@@ -129,7 +123,6 @@ const S = {
     fontWeight: active ? 600 : 400
   }),
   langFlag: { fontSize: '20px', lineHeight: 1 },
-  /* Provider cards */
   sectionLabel: {
     fontSize: '11px', fontWeight: 600, letterSpacing: '1px',
     textTransform: 'uppercase', color: 'var(--text-dim)',
@@ -211,7 +204,6 @@ const S = {
     background: 'rgba(74, 222, 128, 0.1)', borderRadius: '6px',
     border: '1px solid rgba(74, 222, 128, 0.2)'
   },
-  /* Form fields */
   fieldGroup: { display: 'grid', gap: '6px', marginBottom: '14px' },
   fieldLabel: {
     fontSize: '12px', fontWeight: 500, color: 'var(--text)',
@@ -242,7 +234,6 @@ const S = {
     fontFamily: 'var(--sans)', lineHeight: 1.5,
     marginTop: '10px'
   },
-  /* Config note */
   configNote: {
     display: 'flex', alignItems: 'center', gap: '8px',
     padding: '10px 16px', borderRadius: '10px',
@@ -252,7 +243,6 @@ const S = {
     fontFamily: 'var(--sans)', lineHeight: 1.4,
     marginTop: '20px'
   },
-  /* Tips */
   tipGrid: {
     display: 'grid', gap: '12px',
     gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))'
@@ -280,37 +270,30 @@ const S = {
   }
 };
 
-/* ─── Component ─── */
-
 export function OnboardingModal({
   show,
   styles,
-  t,
-  lang,
   theme,
-  setLang,
   setTheme,
   saveLanguageSettings,
   getAuthHeaders,
   setSoulMarkdown,
   setCenterView,
   startNewConversationWithPrompt,
-  buildStartProjectPrompt,
   onClose
 }) {
+  const { t, i18n } = useTranslation();
   const [step, setStep] = useState(0);
   const [error, setError] = useState('');
   const [soulDraft, setSoulDraft] = useState({ name: '', age_range: '', goals: '' });
   const [soulSaving, setSoulSaving] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   
-  // API Keys state
   const [apiKeys, setApiKeys] = useState({});
   const [keySavedStatus, setKeySavedStatus] = useState({});
   const [keySaving, setKeySaving] = useState({});
   const [keyTesting, setKeyTesting] = useState({});
-  const [keyTestingStatus, setKeyTestingStatus] = useState({}); // 'idle', 'testing', 'valid', 'invalid'
-  // Persistência: providers que já têm chave salva (não expira)
+  const [keyTestingStatus, setKeyTestingStatus] = useState({});
   const [keyConfigured, setKeyConfigured] = useState({});
 
   useEffect(() => {
@@ -329,7 +312,6 @@ export function OnboardingModal({
         });
       })
       .catch(() => {});
-    // Carregar quais providers já têm chave salva
     fetch('/api/settings/llm/keys', { headers })
       .then(r => r.json().catch(() => ({})))
       .then(d => {
@@ -441,9 +423,8 @@ export function OnboardingModal({
       
       setKeySavedStatus(prev => ({ ...prev, [providerId]: true }));
       setKeyConfigured(prev => ({ ...prev, [providerId]: true }));
-      setApiKeys(prev => ({ ...prev, [providerId]: '' })); // Clear input on success
+      setApiKeys(prev => ({ ...prev, [providerId]: '' }));
       
-      // Clear success badge after 3 seconds
       setTimeout(() => {
         setKeySavedStatus(prev => ({ ...prev, [providerId]: false }));
       }, 3000);
@@ -457,7 +438,7 @@ export function OnboardingModal({
 
   const handleNext = async () => {
     if (step === 0) {
-      try { await saveLanguageSettings(lang); } catch {}
+      try { await saveLanguageSettings(i18n.language); } catch {}
     }
     if (step === 2) {
       const ok = await saveSoulDraft();
@@ -475,8 +456,8 @@ export function OnboardingModal({
     await completeOnboarding();
     onClose();
     startNewConversationWithPrompt(
-      lang === 'pt' ? 'Quero iniciar um novo projeto.' : 'I want to start a new project.',
-      { internalPrompt: buildStartProjectPrompt(), forceExpertId: 'general', kind: 'task' }
+      t('start_new_project'),
+      { forceExpertId: 'general', kind: 'task' }
     );
   };
 
@@ -493,15 +474,12 @@ export function OnboardingModal({
     <div style={S.overlay} onClick={onClose}>
       <div style={S.modal} onClick={e => e.stopPropagation()}>
 
-        {/* Header */}
         <div style={S.header}>
           <div style={S.title}>{t('onboarding_title')}</div>
           <button style={S.closeBtn} onClick={onClose} title={t('close')}>×</button>
         </div>
 
-        {/* Body */}
         <div style={S.body}>
-          {/* Progress */}
           <div style={S.progressBar}>
             {Array.from({ length: TOTAL_STEPS }, (_, i) => (
               <div key={i} style={S.progressDot(i <= step)} />
@@ -510,24 +488,23 @@ export function OnboardingModal({
 
           {error ? <div style={S.error}>{error}</div> : null}
 
-          {/* ── Step 0: Language ── */}
           {step === 0 && (
             <div>
               <div style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-bright)', marginBottom: '6px' }}>
                 {t('language')}
               </div>
               <div style={{ fontSize: '14px', color: 'var(--text-dim)', marginBottom: '14px' }}>
-                {lang === 'pt' ? 'Selecione o idioma da interface.' : 'Select the interface language.'}
+                {t('select_language_desc')}
               </div>
               <div style={S.langGrid}>
                 {LANGUAGES.map((opt) => {
-                  const active = String(lang) === opt.id;
+                  const active = i18n.language === opt.id;
                   return (
                     <button
                       key={opt.id}
                       style={S.langCard(active)}
                       onClick={() => {
-                        setLang(opt.id);
+                        i18n.changeLanguage(opt.id);
                         saveLanguageSettings(opt.id);
                       }}
                     >
@@ -540,7 +517,6 @@ export function OnboardingModal({
             </div>
           )}
 
-          {/* ── Step 1: Provider Setup ── */}
           {step === 1 && (
             <div>
               <div style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-bright)', marginBottom: '6px' }}>
@@ -550,7 +526,6 @@ export function OnboardingModal({
                 {t('onboarding_providers_desc')}
               </div>
 
-              {/* Free providers */}
               <div style={S.sectionLabel}>
                 <span style={{ color: 'var(--green)' }}>●</span>&ensp;{t('onboarding_free_providers')}
               </div>
@@ -562,7 +537,7 @@ export function OnboardingModal({
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <span style={S.providerName}>{p.name}</span>
                           <span style={S.freeBadge}>FREE</span>
-                          {keyConfigured[p.id] ? <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--green)', display: 'inline-block', flexShrink: 0 }} title={lang === 'pt' ? 'Chave cadastrada e ativa' : 'Key set and active'} /> : null}
+                          {keyConfigured[p.id] ? <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--green)', display: 'inline-block', flexShrink: 0 }} title={t('key_set_and_active')} /> : null}
                         </div>
                         <div style={S.providerModels}>{p.models}</div>
                       </div>
@@ -573,7 +548,7 @@ export function OnboardingModal({
                     <div style={S.keyInputWrapper}>
                       <input 
                         type="password" 
-                        placeholder={lang === 'pt' ? "Cole sua API Key aqui..." : "Paste your API Key here..."}
+                        placeholder={t('paste_api_key_here')}
                         style={S.keyInput} 
                         value={apiKeys[p.id] || ''} 
                         onChange={(e) => {
@@ -596,20 +571,20 @@ export function OnboardingModal({
                           disabled={keyTesting[p.id]}
                         >
                           {keyTesting[p.id] ? '...' :
-                           keyTestingStatus[p.id] === 'valid' ? (lang === 'pt' ? 'Válida ✓' : 'Valid ✓') :
-                           keyTestingStatus[p.id] === 'invalid' ? (lang === 'pt' ? 'Inválida ✗' : 'Invalid ✗') :
-                           (lang === 'pt' ? 'Testar' : 'Test')}
+                           keyTestingStatus[p.id] === 'valid' ? t('valid') :
+                           keyTestingStatus[p.id] === 'invalid' ? t('invalid') :
+                           t('test')}
                         </button>
                       )}
                       {keySavedStatus[p.id] ? (
-                        <span style={S.savedBadge}>✓ {lang === 'pt' ? 'Salvo' : 'Saved'}</span>
+                        <span style={S.savedBadge}>✓ {t('saved')}</span>
                       ) : (
                         <button 
                           style={{...S.saveBtn, opacity: (!apiKeys[p.id] || keySaving[p.id]) ? 0.5 : 1}} 
                           onClick={() => handleSaveApiKey(p.id)}
                           disabled={!apiKeys[p.id] || keySaving[p.id]}
                         >
-                          {keySaving[p.id] ? '...' : (lang === 'pt' ? 'Salvar' : 'Save')}
+                          {keySaving[p.id] ? '...' : t('save')}
                         </button>
                       )}
                     </div>
@@ -617,14 +592,13 @@ export function OnboardingModal({
                 ))}
               </div>
 
-              {/* Paid providers */}
               <div style={S.sectionLabel}>{t('onboarding_paid_providers')}</div>
               <div style={S.providerGrid}>
                 {PAID_PROVIDERS.map((p) => (
                   <div key={p.id} style={S.providerCard}>
                     <div style={S.providerHeader}>
                       <div style={S.providerInfo}>
-                        <span style={S.providerName}>{p.name}{keyConfigured[p.id] ? <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--green)', display: 'inline-block', marginLeft: '8px', verticalAlign: 'middle' }} title={lang === 'pt' ? 'Chave cadastrada e ativa' : 'Key set and active'} /> : null}</span>
+                        <span style={S.providerName}>{p.name}{keyConfigured[p.id] ? <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--green)', display: 'inline-block', marginLeft: '8px', verticalAlign: 'middle' }} title={t('key_set_and_active')} /> : null}</span>
                         <div style={S.providerModels}>{p.models}</div>
                       </div>
                       <a href={p.url} target="_blank" rel="noopener noreferrer" style={S.getLinkBtn}>
@@ -634,7 +608,7 @@ export function OnboardingModal({
                     <div style={S.keyInputWrapper}>
                       <input 
                         type="password" 
-                        placeholder={lang === 'pt' ? "Cole sua API Key aqui..." : "Paste your API Key here..."}
+                        placeholder={t('paste_api_key_here')}
                         style={S.keyInput} 
                         value={apiKeys[p.id] || ''} 
                         onChange={(e) => {
@@ -657,27 +631,26 @@ export function OnboardingModal({
                           disabled={keyTesting[p.id]}
                         >
                           {keyTesting[p.id] ? '...' :
-                           keyTestingStatus[p.id] === 'valid' ? (lang === 'pt' ? 'Válida ✓' : 'Valid ✓') :
-                           keyTestingStatus[p.id] === 'invalid' ? (lang === 'pt' ? 'Inválida ✗' : 'Invalid ✗') :
-                           (lang === 'pt' ? 'Testar' : 'Test')}
+                           keyTestingStatus[p.id] === 'valid' ? t('valid') :
+                           keyTestingStatus[p.id] === 'invalid' ? t('invalid') :
+                           t('test')}
                         </button>
                       )}
                       {keySavedStatus[p.id] ? (
-                        <span style={S.savedBadge}>✓ {lang === 'pt' ? 'Salvo' : 'Saved'}</span>
+                        <span style={S.savedBadge}>✓ {t('saved')}</span>
                       ) : (
                         <button 
                           style={{...S.saveBtn, opacity: (!apiKeys[p.id] || keySaving[p.id]) ? 0.5 : 1}} 
                           onClick={() => handleSaveApiKey(p.id)}
                           disabled={!apiKeys[p.id] || keySaving[p.id]}
                         >
-                          {keySaving[p.id] ? '...' : (lang === 'pt' ? 'Salvar' : 'Save')}
+                          {keySaving[p.id] ? '...' : t('save')}
                         </button>
                       )}
                     </div>
                   </div>
                 ))}
 
-                {/* Local LLM */}
                 <div style={S.providerCard}>
                   <div style={S.providerHeader}>
                     <div style={S.providerInfo}>
@@ -694,12 +667,11 @@ export function OnboardingModal({
                     </a>
                   </div>
                   <div style={{ fontSize: '13px', color: 'var(--text-dim)', fontStyle: 'italic' }}>
-                    {lang === 'pt' ? 'Detectado automaticamente quando em execução na porta padrão.' : 'Auto-detected when running on default port.'}
+                    {t('auto_detected_ollama')}
                   </div>
                 </div>
               </div>
 
-              {/* Config note */}
               <div style={S.configNote}>
                 <span style={{ fontSize: '18px' }}>💡</span>
                 <span>{t('onboarding_configure_later')}</span>
@@ -707,26 +679,23 @@ export function OnboardingModal({
             </div>
           )}
 
-          {/* ── Step 2: Profile ── */}
           {step === 2 && (
             <div style={{ maxWidth: '600px', margin: '0 auto' }}>
               <div style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-bright)', marginBottom: '18px' }}>
                 {t('onboarding_profile_question')}
               </div>
 
-              {/* Name */}
               <div style={S.fieldGroup}>
                 <div style={S.fieldLabel}>{t('name_label')}</div>
                 <input
                   style={S.input}
                   value={soulDraft?.name || ''}
                   onChange={(e) => setSoulDraft((prev) => ({ ...(prev || {}), name: e.target.value }))}
-                  placeholder={lang === 'pt' ? 'Seu nome ou apelido' : 'Your name or nickname'}
+                  placeholder={t('your_name_or_nickname')}
                   autoFocus
                 />
               </div>
 
-              {/* Age range (select) */}
               <div style={S.fieldGroup}>
                 <div style={S.fieldLabel}>{t('age_range_label')}</div>
                 <select
@@ -734,14 +703,13 @@ export function OnboardingModal({
                   value={soulDraft?.age_range || ''}
                   onChange={(e) => setSoulDraft((prev) => ({ ...(prev || {}), age_range: e.target.value }))}
                 >
-                  <option value="">{lang === 'pt' ? 'Selecione...' : 'Select...'}</option>
+                  <option value="">{t('select')}</option>
                   {AGE_RANGE_KEYS.map((key) => (
                     <option key={key} value={t(key)}>{t(key)}</option>
                   ))}
                 </select>
               </div>
 
-              {/* Goals (select) */}
               <div style={S.fieldGroup}>
                 <div style={S.fieldLabel}>{t('goals_label')}</div>
                 <select
@@ -749,14 +717,13 @@ export function OnboardingModal({
                   value={soulDraft?.goals || ''}
                   onChange={(e) => setSoulDraft((prev) => ({ ...(prev || {}), goals: e.target.value }))}
                 >
-                  <option value="">{lang === 'pt' ? 'Selecione...' : 'Select...'}</option>
+                  <option value="">{t('select')}</option>
                   {GOAL_KEYS.map((key) => (
                     <option key={key} value={t(key)}>{t(key)}</option>
                   ))}
                 </select>
               </div>
 
-              {/* Privacy note */}
               <div style={S.privacyNote}>
                 <span style={{ fontSize: '18px', flexShrink: 0 }}>🔒</span>
                 <span>{t('onboarding_privacy_note')}</span>
@@ -764,7 +731,6 @@ export function OnboardingModal({
             </div>
           )}
 
-          {/* ── Step 3: Getting Started ── */}
           {step === 3 && (
             <div>
               <div style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-bright)', marginBottom: '16px' }}>
@@ -786,7 +752,6 @@ export function OnboardingModal({
           )}
         </div>
 
-        {/* Footer — only Back / Next (or Finish) */}
         <div style={S.footer}>
           <div>
             {step > 0 ? (
@@ -825,7 +790,7 @@ export function OnboardingModal({
                 disabled={soulSaving || actionLoading}
               >
                 {soulSaving
-                  ? (lang === 'pt' ? 'Salvando...' : 'Saving...')
+                  ? t('saving')
                   : t('onboarding_next')
                 } →
               </button>

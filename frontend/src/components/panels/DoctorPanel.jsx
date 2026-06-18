@@ -1,18 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { formatCompactDateTime } from '../../lib/utils/formatters';
 
-/**
- * DoctorPanel - Painel de diagnóstico e monitoramento do sistema.
- * 
- * @param {Object} props
- * @param {Object} props.styles - Estilos
- * @param {Object} props.doctorReport - Relatório do doctor
- * @param {boolean} props.loading - Se está carregando
- * @param {Function} props.onRefresh - Função para atualizar
- * @param {Function} props.onRunCheck - Função para executar check
- * @param {Function} props.onLoadSystemMap - Função para carregar mapa do sistema
- * @param {Function} props.t - Função de tradução
- */
 const DoctorPanel = ({
   styles,
   doctorReport,
@@ -20,8 +9,8 @@ const DoctorPanel = ({
   onRefresh,
   onRunCheck,
   onLoadSystemMap,
-  t
 }) => {
+  const { t } = useTranslation();
   const [expandedSections, setExpandedSections] = useState({
     overview: true,
     checks: false,
@@ -68,9 +57,9 @@ const DoctorPanel = ({
     <div style={styles.panel}>
       <div style={styles.panelHeader}>
         <h3 style={styles.panelTitle}>
-          {t ? t('system_doctor') : 'System Doctor'}
+          {t('system_doctor')}
           <span style={{...styles.statusBadge, ...getStatusColor(systemStatus)}}>
-            {t ? t(systemStatus) : systemStatus}
+            {t(systemStatus)}
           </span>
         </h3>
         <div style={styles.panelActions}>
@@ -78,17 +67,17 @@ const DoctorPanel = ({
             style={styles.panelButton}
             onClick={onRefresh}
             disabled={loading}
-            title={t ? t('refresh') : 'Refresh'}
+            title={t('refresh')}
           >
-            {loading ? '...' : 'Refresh'}
+            {loading ? '...' : t('refresh')}
           </button>
           <button
             style={styles.panelButton}
             onClick={onRunCheck}
             disabled={loading}
-            title={t ? t('run_check') : 'Run Check'}
+            title={t('run_check')}
           >
-            {t ? t('check') : 'Check'}
+            {t('check')}
           </button>
         </div>
       </div>
@@ -101,7 +90,7 @@ const DoctorPanel = ({
             onClick={() => toggleSection('overview')}
           >
             <h4 style={styles.sectionTitle}>
-              {t ? t('overview') : 'Overview'}
+              {t('overview')}
             </h4>
             <span style={styles.sectionToggle}>
               {expandedSections.overview ? 'v' : '>'}
@@ -114,7 +103,7 @@ const DoctorPanel = ({
                 <div style={styles.overviewGrid}>
                   <div style={styles.overviewItem}>
                     <div style={styles.overviewLabel}>
-                      {t ? t('last_check') : 'Last Check'}
+                      {t('last_check')}
                     </div>
                     <div style={styles.overviewValue}>
                       {formatCompactDateTime(doctorReport.timestamp)}
@@ -123,7 +112,7 @@ const DoctorPanel = ({
                   
                   <div style={styles.overviewItem}>
                     <div style={styles.overviewLabel}>
-                      {t ? t('total_checks') : 'Total Checks'}
+                      {t('total_checks')}
                     </div>
                     <div style={styles.overviewValue}>
                       {doctorReport.checks?.length || 0}
@@ -132,7 +121,7 @@ const DoctorPanel = ({
                   
                   <div style={styles.overviewItem}>
                     <div style={styles.overviewLabel}>
-                      {t ? t('issues_found') : 'Issues Found'}
+                      {t('issues_found')}
                     </div>
                     <div style={styles.overviewValue}>
                       {getChecksByStatus('error').length + getChecksByStatus('warning').length}
@@ -141,16 +130,16 @@ const DoctorPanel = ({
                   
                   <div style={styles.overviewItem}>
                     <div style={styles.overviewLabel}>
-                      {t ? t('system_health') : 'System Health'}
+                      {t('system_health')}
                     </div>
                     <div style={{...styles.overviewValue, ...getStatusColor(systemStatus)}}>
-                      {t ? t(systemStatus) : systemStatus}
+                      {t(systemStatus)}
                     </div>
                   </div>
                 </div>
               ) : (
                 <div style={styles.emptyState}>
-                  {t ? t('no_data_available') : 'No data available'}
+                  {t('no_data_available')}
                 </div>
               )}
             </div>
@@ -164,7 +153,7 @@ const DoctorPanel = ({
             onClick={() => toggleSection('checks')}
           >
             <h4 style={styles.sectionTitle}>
-              {t ? t('system_checks') : 'System Checks'}
+              {t('system_checks')}
             </h4>
             <span style={styles.sectionToggle}>
               {expandedSections.checks ? 'v' : '>'}
@@ -182,7 +171,7 @@ const DoctorPanel = ({
                           {check.name}
                         </span>
                         <span style={{...styles.statusBadge, ...getStatusColor(check.status)}}>
-                          {t ? t(check.status) : check.status}
+                          {t(check.status)}
                         </span>
                       </div>
                       {check.message && (
@@ -202,7 +191,7 @@ const DoctorPanel = ({
                 </div>
               ) : (
                 <div style={styles.emptyState}>
-                  {t ? t('no_checks_performed') : 'No checks performed'}
+                  {t('no_checks_performed')}
                 </div>
               )}
             </div>
@@ -216,7 +205,7 @@ const DoctorPanel = ({
             onClick={() => toggleSection('systemMap')}
           >
             <h4 style={styles.sectionTitle}>
-              {t ? t('system_map') : 'System Map'}
+              {t('system_map')}
             </h4>
             <span style={styles.sectionToggle}>
               {expandedSections.systemMap ? 'v' : '>'}
@@ -231,7 +220,7 @@ const DoctorPanel = ({
                   onClick={onLoadSystemMap}
                   disabled={loading}
                 >
-                  {t ? t('load_system_map') : 'Load System Map'}
+                  {t('load_system_map')}
                 </button>
               </div>
             </div>
@@ -245,7 +234,7 @@ const DoctorPanel = ({
             onClick={() => toggleSection('recommendations')}
           >
             <h4 style={styles.sectionTitle}>
-              {t ? t('recommendations') : 'Recommendations'}
+              {t('recommendations')}
             </h4>
             <span style={styles.sectionToggle}>
               {expandedSections.recommendations ? 'v' : '>'}
@@ -258,7 +247,7 @@ const DoctorPanel = ({
                 {getChecksByStatus('error').map((check, index) => (
                   <div key={index} style={styles.recommendationItem}>
                     <div style={styles.recommendationTitle}>
-                      {t ? t('fix_issue') : 'Fix Issue'}: {check.name}
+                      {t('fix_issue')}: {check.name}
                     </div>
                     <div style={styles.recommendationDescription}>
                       {check.message}
@@ -269,7 +258,7 @@ const DoctorPanel = ({
                 {getChecksByStatus('warning').map((check, index) => (
                   <div key={index} style={styles.recommendationItem}>
                     <div style={styles.recommendationTitle}>
-                      {t ? t('review_warning') : 'Review Warning'}: {check.name}
+                      {t('review_warning')}: {check.name}
                     </div>
                     <div style={styles.recommendationDescription}>
                       {check.message}
@@ -280,7 +269,7 @@ const DoctorPanel = ({
                 {getChecksByStatus('error').length === 0 && 
                  getChecksByStatus('warning').length === 0 && (
                   <div style={styles.emptyState}>
-                    {t ? t('no_recommendations') : 'No recommendations - System is healthy!'}
+                    {t('no_recommendations')}
                   </div>
                 )}
               </div>

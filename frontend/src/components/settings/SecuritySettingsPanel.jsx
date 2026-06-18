@@ -1,9 +1,8 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 
 export default function SecuritySettingsPanel({
   styles,
-  t,
-  lang,
   settingsLoading,
   securitySettings,
   securitySettingsUpdatedAt,
@@ -21,6 +20,7 @@ export default function SecuritySettingsPanel({
   loadAutoApproveCommands,
   deleteAutoApproveCommand,
 }) {
+  const { t } = useTranslation();
   return (
     <>
       <div style={styles.settingsSection}>
@@ -158,16 +158,14 @@ export default function SecuritySettingsPanel({
       </div>
 
       <div style={styles.settingsSection}>
-        <div style={styles.settingsSectionTitle}>{lang === 'pt' ? 'Sessão (JWT)' : 'Session (JWT)'}</div>
+        <div style={styles.settingsSectionTitle}>{t('session_jwt')}</div>
         <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--sans)', lineHeight: 1.5 }}>
-          {lang === 'pt'
-            ? 'Controla a duração do token de login. Valores maiores aumentam o risco em caso de vazamento. Vale para novos tokens (pode exigir sair/entrar).'
-            : 'Controls the login token duration. Larger values increase risk if a token leaks. Applies to newly issued tokens (may require sign out/in).'}
+          {t('jwt_description')}
         </div>
         <div style={{ display: 'grid', gap: '10px', marginTop: '10px' }}>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
             <div style={{ flex: 1, minWidth: '220px' }}>
-              <div style={styles.settingsLabel}>{lang === 'pt' ? 'Minutos' : 'Minutes'}</div>
+              <div style={styles.settingsLabel}>{t('minutes')}</div>
               <input
                 type="number"
                 min={15}
@@ -179,9 +177,10 @@ export default function SecuritySettingsPanel({
                 disabled={settingsLoading || authSettingsSaving}
               />
               <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
-                {lang === 'pt'
-                  ? `atual=${Number(authSettings?.jwt_expire_minutes || 0)} • padrão=${Number(authSettings?.default_jwt_expire_minutes || 0)}`
-                  : `current=${Number(authSettings?.jwt_expire_minutes || 0)} • default=${Number(authSettings?.default_jwt_expire_minutes || 0)}`}
+                {t('current_default_values', {
+                  current: Number(authSettings?.jwt_expire_minutes || 0),
+                  default: Number(authSettings?.default_jwt_expire_minutes || 0)
+                })}
               </div>
             </div>
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
@@ -197,7 +196,7 @@ export default function SecuritySettingsPanel({
                 onClick={() => applyJwtExpiryChange({ use_default: false })}
                 disabled={settingsLoading || authSettingsSaving}
               >
-                {authSettingsSaving ? t('updating') : (lang === 'pt' ? 'Aplicar' : 'Apply')}
+                {authSettingsSaving ? t('updating') : t('apply')}
               </button>
             </div>
           </div>
@@ -210,20 +209,18 @@ export default function SecuritySettingsPanel({
       <div style={styles.settingsSection}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
           <div style={styles.settingsSectionTitle}>
-            {lang === 'pt' ? 'Permissões automáticas (comandos)' : 'Auto-approvals (commands)'}
+            {t('auto_approvals_commands')}
           </div>
           <button
             style={styles.settingsSecondaryButton}
             onClick={() => loadAutoApproveCommands({ silent: false })}
             disabled={autoApproveCommandsLoading}
           >
-            {autoApproveCommandsLoading ? t('loading') : (lang === 'pt' ? 'Recarregar' : 'Refresh')}
+            {autoApproveCommandsLoading ? t('loading') : t('refresh')}
           </button>
         </div>
         <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)', lineHeight: 1.5 }}>
-          {lang === 'pt'
-            ? 'Comandos aqui podem ser executados automaticamente quando forem idênticos. Remova se não quiser mais essa permissão.'
-            : 'Commands here may run automatically when identical. Remove if you no longer want this permission.'}
+          {t('auto_approvals_desc')}
         </div>
         {autoApproveCommandsError ? (
           <div style={{ ...styles.settingsError, marginTop: '8px' }}>{autoApproveCommandsError}</div>
@@ -240,24 +237,22 @@ export default function SecuritySettingsPanel({
                     style={styles.settingsSecondaryButton}
                     onClick={() => {
                       setGenericModal({
-                        title: lang === 'pt' ? 'Remover permissão' : 'Remove permission',
-                        body: lang === 'pt'
-                          ? 'Remover esta permissão automática? O comando voltará a pedir confirmação.'
-                          : 'Remove this auto-approval? The command will ask for confirmation again.',
+                        title: t('remove_permission'),
+                        body: t('remove_permission_confirm'),
                         onConfirm: async () => {
                           await deleteAutoApproveCommand(cmd);
                         }
                       });
                     }}
                   >
-                    {lang === 'pt' ? 'Remover' : 'Remove'}
+                    {t('remove')}
                   </button>
                 </div>
               </div>
             ))
           ) : (
             <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
-              {lang === 'pt' ? 'Nenhuma permissão automática salva.' : 'No auto-approvals saved.'}
+              {t('no_auto_approvals')}
             </div>
           )}
         </div>

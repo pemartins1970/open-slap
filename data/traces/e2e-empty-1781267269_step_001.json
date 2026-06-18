@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-06-12T09:27:50.686682",
+  "session": "e2e-empty-1781267269",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "Diga apenas: VIVO",
+  "output": "VIVO...",
+  "reward": 0.0
+}

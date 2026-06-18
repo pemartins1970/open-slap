@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-06-04T09:49:48.645079",
+  "session": "e2b48403-3e3e-4e83-8caa-195393a38f68",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "preciso de um plano de testes para o endpoint /api/settings/llm",
+  "output": "Com certeza! Posso ajudar a criar um plano de testes para o endpoint `/api/settings/llm`.\n\nPara gara...",
+  "reward": 0.0
+}

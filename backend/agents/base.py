@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, AsyncGenerator
 
@@ -18,9 +19,23 @@ class BaseAgent:
     async def stream_execute(self, intent: str, context: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
         from backend.llm_manager_simple import llm_manager
 
-        expert_name = context.get("expert", self.name) if context else self.name
+        expert_raw = context.get("expert", self.name) if isinstance(context, dict) else self.name
+        expert_name = expert_raw if isinstance(expert_raw, dict) else {"id": str(expert_raw), "name": str(expert_raw)}
         user_context = context.get("combined_context", "") if context else ""
-        system_block = f"{self.system_prompt}\n\n---\nUser context:\n{user_context}" if user_context else self.system_prompt
+
+        skills_block = ""
+        if self.skills:
+            parts = ["\n\n## Available Skills"]
+            for s in self.skills:
+                parts.append(f"\n### {s['name']}")
+                parts.append(s["description"])
+                parts.append(f"Input: {json.dumps(s.get('input_schema', {}))}")
+                parts.append(f"Output: {json.dumps(s.get('output_schema', {}))}")
+            skills_block = "\n".join(parts)
+
+        system_block = f"{self.system_prompt}{skills_block}"
+        if user_context:
+            system_block += f"\n\n---\nUser context:\n{user_context}"
         prompt = f"[{self.name.upper()} intent]\n{intent}"
 
         async for chunk in llm_manager.stream_generate(prompt=prompt, expert=expert_name, user_context=system_block):

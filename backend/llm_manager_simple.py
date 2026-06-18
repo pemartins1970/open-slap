@@ -6,17 +6,97 @@ Gerenciamento de providers LLM (Gemini, Groq, Ollama)
 import os
 import json
 import asyncio
+import re
+from datetime import datetime
 from typing import Dict, Any, List, Optional, AsyncGenerator, Tuple
 import aiohttp
 from pathlib import Path
 from dotenv import load_dotenv
 import sqlite3
 import itertools
+from backend.utils.text_processing import strip_internal_markup
+
+
+class RateLimitError(Exception):
+    """Indica rate limit (HTTP 429) — usado para gatilhar rotação de chave ou fallback de provider"""
+    pass
+
+
+def _parse_retry_after(response) -> Optional[float]:
+    """Lê header Retry-After e retorna segundos de espera, ou None se ausente/inválido.
+    Suporta formato decimal (ex: '120') e HTTP-date (ex: 'Fri, 31 Dec 1999 23:59:59 GMT')."""
+    raw = response.headers.get("Retry-After") if hasattr(response, "headers") else None
+    if not raw:
+        return None
+    raw = str(raw).strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        retry_time = parsedate_to_datetime(raw)
+        if retry_time:
+            now = datetime.now(retry_time.tzinfo) if retry_time.tzinfo else datetime.now()
+            return max(0.0, (retry_time - now).total_seconds())
+    except Exception:
+        pass
+    return None
+
+
+def _extract_retry_from_body(body: str) -> Optional[float]:
+    """Tenta extrair tempo de retry do corpo da resposta (fallback para providers que enviam no JSON)."""
+    match = re.search(r'[Rr]etry\s+[Ii]n\s+([\d.]+)\s*s', body or "")
+    if match:
+        return float(match.group(1))
+    return None
+
+
+async def _wait_retry_after(response, body: str = "", default_seconds: float = 5.0, cap: float = 300.0) -> None:
+    """Espera o tempo do header Retry-After, com fallback no body, default e cap de segurança."""
+    seconds = _parse_retry_after(response)
+    if seconds is None and body:
+        seconds = _extract_retry_from_body(body)
+    if seconds is None:
+        seconds = default_seconds
+    seconds = min(seconds, cap)
+    print(f"[llm_manager] Rate limit detectado — aguardando {seconds:.0f}s...")
+    await asyncio.sleep(seconds)
+
+
+def _is_rate_limited(status: int, body: str) -> bool:
+    """Retorna True se status HTTP ou body indicam rate limit / quota exhaustion.
+    Checks:
+      1. status HTTP (429, 503)
+      2. JSON body com error.status == "RESOURCE_EXHAUSTED" ou error.code == 429
+      3. Fallback: string search se body não for JSON válido
+    """
+    if status in (429, 503):
+        return True
+    if not body or not body.strip():
+        return False
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        lowered = body.lower()
+        return "resource_exhausted" in lowered or "resource exhausted" in lowered or "rate limit" in lowered or "quota" in lowered
+    err = parsed.get("error") if isinstance(parsed, dict) else None
+    if not isinstance(err, dict):
+        return False
+    if str(err.get("status", "")).upper() == "RESOURCE_EXHAUSTED":
+        return True
+    if err.get("code") in (429, 8):
+        return True
+    return False
+
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(dotenv_path=BASE_DIR / ".env", override=False)
 
 HTTP_TIMEOUT_S = float(str(os.getenv("OPENSLAP_HTTP_TIMEOUT_S") or "6").strip() or "6")
+CONTEXT_WINDOW_MESSAGES = 10  # Número fixo de mensagens do histórico enviadas ao LLM
 
 
 def _sanitize_text(v: Any) -> str:
@@ -65,6 +145,21 @@ def _normalize_ollama_url(v: Any) -> str:
         if base.endswith(suffix):
             base = base[: -len(suffix)].rstrip("/")
     return base
+
+
+def load_conversation_history(conversation_id: int, limit: int = CONTEXT_WINDOW_MESSAGES) -> List[Dict[str, str]]:
+    try:
+        from backend.db import get_conversation_messages
+        all_msgs = get_conversation_messages(conversation_id) or []
+    except Exception:
+        return []
+    filtered = [m for m in all_msgs if m.get("role") in ("user", "assistant")]
+    recent = filtered[-limit:] if len(filtered) > limit else filtered
+    for m in recent:
+        raw = m.get("content") or ""
+        cleaned = strip_internal_markup(raw)
+        m["content"] = cleaned
+    return recent
 
 
 class LLMManager:
@@ -372,7 +467,12 @@ class LLMManager:
             return ""
 
     def _build_full_prompt(
-        self, prompt: str, expert: Dict[str, Any], user_context: Optional[str]
+        self,
+        prompt: str,
+        expert: Dict[str, Any],
+        user_context: Optional[str],
+        *,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> str:
         expert_prompt = (expert or {}).get("prompt") or ""
         base = expert_prompt.strip()
@@ -456,10 +556,17 @@ class LLMManager:
             base = f"{base}\n\n{strict}".strip()
             if ctx:
                 base = f"{base}\n\nContexto do sistema (lista de softwares, hardware, etc.):\n{ctx}".strip()
+            if history:
+                lines = []
+                for m in history:
+                    label = "Usuário" if m.get("role") == "user" else "Assistente"
+                    lines.append(f"{label}: {m.get('content', '')}")
+                hist_text = "\n\n".join(lines)
+                base = f"{base}\n\n---\n{hist_text}\n---"
             return f"{base}\n\nPedido do usuário:\n{prompt}\n\nComando:".strip()
         calibration_rules = (
             "Regras de resposta:\n"
-            "- Responda em português.\n"
+            "- Responda sempre no mesmo idioma utilizado pelo usuário na mensagem recebida.\n"
             "- Seja direto e útil; seja curto por padrão.\n"
             "- Não repita nem cite o perfil/SOUL; use apenas para ajustar tom e exemplos.\n"
             '- Não faça longas apresentações quando a mensagem for curta (ex.: "teste").\n'
@@ -486,6 +593,13 @@ class LLMManager:
         base = f"{base}\n\n{calibration_rules}".strip()
         if ctx:
             base = f"{base}\n\nContexto do usuário (SOUL, uso interno):\n{ctx}".strip()
+        if history:
+            lines = []
+            for m in history:
+                label = "Usuário" if m.get("role") == "user" else "Assistente"
+                lines.append(f"{label}: {m.get('content', '')}")
+            hist_text = "\n\n".join(lines)
+            base = f"{base}\n\n---\n{hist_text}\n---"
         return f"{base}\n\nPergunta: {prompt}\n\nResposta:".strip()
 
     async def stream_generate(
@@ -495,9 +609,17 @@ class LLMManager:
         *,
         user_context: Optional[str] = None,
         llm_override: Optional[Dict[str, Any]] = None,
+        conversation_id: Optional[int] = None,
     ) -> AsyncGenerator[str, None]:
         """Gera resposta com streaming usando fallback automático"""
         override = llm_override or {}
+        history: Optional[List[Dict[str, str]]] = None
+        if conversation_id is not None:
+            try:
+                history = load_conversation_history(conversation_id)
+            except Exception as exc:
+                print(f"[llm_manager] Erro ao carregar histórico: {exc}")
+                history = None
         override_mode = str(override.get("mode") or "").strip().lower()
         preferred_provider = str(override.get("provider") or "").strip().lower() or None
         api_key_override = _sanitize_api_key(override.get("api_key")) or None
@@ -540,6 +662,9 @@ class LLMManager:
                     base_url_override or provider.get("base_url")
                 )
                 provider["model"] = model_override or provider.get("model")
+                if api_key_override:
+                    provider["keys"] = [api_key_override]
+                    provider["current_key_index"] = 0
             elif preferred_provider == "gemini":
                 provider.setdefault(
                     "base_url", "https://generativelanguage.googleapis.com/v1"
@@ -561,6 +686,24 @@ class LLMManager:
                     bu = bu[:-6] + "v1"
                 if bu:
                     provider["base_url"] = bu
+                if api_key_override:
+                    provider["keys"] = [api_key_override]
+                    provider["current_key_index"] = 0
+
+            elif preferred_provider == "openrouter":
+                provider.setdefault(
+                    "base_url", os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+                )
+                provider.setdefault(
+                    "model", os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-nano-30b-a3b:free")
+                )
+                provider["base_url"] = _normalize_openai_compatible_base_url(
+                    base_url_override or provider.get("base_url")
+                )
+                provider["model"] = model_override or provider.get("model")
+                provider["key"] = api_key_override or _sanitize_api_key(provider.get("key") or "")
+                if not provider.get("models"):
+                    provider["models"] = [provider["model"]]
 
             try:
                 if preferred_provider == "gemini":
@@ -570,6 +713,7 @@ class LLMManager:
                         provider,
                         user_context=user_context,
                         api_key_override=api_key_override,
+                        history=history,
                     )
                     first = await agen.__anext__()
                     yield {
@@ -588,6 +732,7 @@ class LLMManager:
                         provider,
                         user_context=user_context,
                         api_key_override=api_key_override,
+                        history=history,
                     )
                     first = await agen.__anext__()
                     yield {
@@ -601,7 +746,7 @@ class LLMManager:
                     return
                 if preferred_provider == "ollama":
                     agen = self._stream_ollama(
-                        prompt, expert, provider, user_context=user_context
+                        prompt, expert, provider, user_context=user_context, history=history
                     )
                     first = await agen.__anext__()
                     yield {
@@ -615,7 +760,7 @@ class LLMManager:
                     return
                 if preferred_provider == "openai":
                     agen = self._stream_openai(
-                        prompt, expert, provider, user_context=user_context
+                        prompt, expert, provider, user_context=user_context, history=history
                     )
                     first = await agen.__anext__()
                     yield {
@@ -629,7 +774,7 @@ class LLMManager:
                     return
                 if preferred_provider == "openrouter":
                     agen = self._stream_openrouter_fallback(
-                        prompt, expert, provider, user_context=user_context
+                        prompt, expert, provider, user_context=user_context, history=history
                     )
                     first = await agen.__anext__()
                     yield {
@@ -667,7 +812,7 @@ class LLMManager:
 
                 if provider_id == "gemini":
                     agen = self._stream_gemini(
-                        prompt, expert, provider, user_context=user_context
+                        prompt, expert, provider, user_context=user_context, history=history
                     )
                     first = await agen.__anext__()
                     yield {
@@ -681,7 +826,7 @@ class LLMManager:
                     return
                 elif provider_id == "groq":
                     agen = self._stream_groq(
-                        prompt, expert, provider, user_context=user_context
+                        prompt, expert, provider, user_context=user_context, history=history
                     )
                     first = await agen.__anext__()
                     yield {
@@ -695,7 +840,7 @@ class LLMManager:
                     return
                 elif provider_id == "ollama":
                     agen = self._stream_ollama(
-                        prompt, expert, provider, user_context=user_context
+                        prompt, expert, provider, user_context=user_context, history=history
                     )
                     first = await agen.__anext__()
                     yield {
@@ -709,7 +854,7 @@ class LLMManager:
                     return
                 elif provider_id == "openrouter":
                     agen = self._stream_openrouter_fallback(
-                        prompt, expert, provider, user_context=user_context
+                        prompt, expert, provider, user_context=user_context, history=history
                     )
                     first = await agen.__anext__()
                     yield {
@@ -723,7 +868,7 @@ class LLMManager:
                     return
                 elif provider_id == "openai":
                     agen = self._stream_openai(
-                        prompt, expert, provider, user_context=user_context
+                        prompt, expert, provider, user_context=user_context, history=history
                     )
                     first = await agen.__anext__()
                     yield {
@@ -757,13 +902,23 @@ class LLMManager:
         *,
         user_context: Optional[str] = None,
         api_key_override: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncGenerator[str, None]:
-        """Streaming com Gemini"""
-        key = api_key_override or self._get_next_key("gemini")
-        if not key:
-            raise Exception("Sem chaves Gemini disponíveis")
+        """Streaming com Gemini com rotação de chave em 429"""
+        full_prompt = self._build_full_prompt(prompt, expert, user_context, history=history)
 
-        full_prompt = self._build_full_prompt(prompt, expert, user_context)
+        keys_to_try: List[str] = []
+        if api_key_override:
+            keys_to_try = [api_key_override]
+        else:
+            num_keys = len(provider.get("keys") or [])
+            for _ in range(num_keys if num_keys > 0 else 1):
+                k = self._get_next_key("gemini")
+                if k:
+                    keys_to_try.append(k)
+        keys_to_try = [k for k in keys_to_try if k]
+        if not keys_to_try:
+            raise Exception("Sem chaves Gemini disponíveis")
 
         def normalize_model_name(value: str) -> str:
             v = str(value or "").strip()
@@ -789,29 +944,30 @@ class LLMManager:
                 return [v, v[:-2] + "v1beta"]
             return [v]
 
-        async def list_models(base_url: str) -> List[Dict[str, Any]]:
+        async def list_models(base_url: str, key: str) -> List[Dict[str, Any]]:
             base_url = normalize_base_url(base_url)
-            if base_url in self._gemini_models_cache:
-                return self._gemini_models_cache[base_url]
+            cache_key = f"{base_url}|{key[-8:]}"
+            if cache_key in self._gemini_models_cache:
+                return self._gemini_models_cache[cache_key]
             url = f"{base_url}/models"
             headers = {"x-goog-api-key": key}
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers) as response:
                     if response.status != 200:
-                        self._gemini_models_cache[base_url] = []
+                        self._gemini_models_cache[cache_key] = []
                         return []
                     data = await response.json()
                     models = data.get("models") or []
                     if not isinstance(models, list):
                         models = []
-                    self._gemini_models_cache[base_url] = models
+                    self._gemini_models_cache[cache_key] = models
                     return models
 
-        async def pick_model(base_url: str) -> Optional[str]:
-            cache_key = f"{normalize_base_url(base_url)}"
+        async def pick_model(base_url: str, key: str) -> Optional[str]:
+            cache_key = f"{normalize_base_url(base_url)}|{key[-8:]}"
             if cache_key in self._gemini_model_pick_cache:
                 return self._gemini_model_pick_cache[cache_key]
-            models = await list_models(base_url)
+            models = await list_models(base_url, key)
             best = None
             for m in models:
                 name = normalize_model_name(m.get("name") or "")
@@ -841,7 +997,7 @@ class LLMManager:
                         out.append(t)
             return out
 
-        async def post_and_parse(base_url: str, model: str) -> List[str]:
+        async def post_and_parse(base_url: str, model: str, key: str) -> List[str]:
             base_url = normalize_base_url(base_url)
             model = normalize_model_name(model)
             url = f"{base_url}/models/{model}:streamGenerateContent"
@@ -854,6 +1010,11 @@ class LLMManager:
                 async with session.post(url, headers=headers, json=data) as response:
                     body = await response.text()
                     body_str = (body or "").strip()
+                    if _is_rate_limited(response.status, body_str):
+                        await _wait_retry_after(response, body=body_str)
+                        raise RateLimitError(
+                            f"Gemini rate limit (key={key[-8:]}): {response.status}"
+                        )
                     if response.status != 200:
                         clipped = body_str
                         if len(clipped) > 600:
@@ -899,45 +1060,59 @@ class LLMManager:
         model = provider.get("model") or "gemini-2.5-flash"
 
         last_err: Optional[Exception] = None
-        for base in alternate_base_urls(base_url):
-            try:
-                chunks = await post_and_parse(base, model)
-                for c in chunks:
-                    yield c
-                return
-            except Exception as e:
-                last_err = e
-                msg = str(e) or repr(e)
-                lowered = msg.lower()
-                if "models/" in lowered and "not found for api version" in lowered:
-                    picked = await pick_model(base)
-                    if picked and normalize_model_name(picked) != normalize_model_name(
-                        model
-                    ):
-                        try:
-                            chunks = await post_and_parse(base, picked)
-                            provider["model"] = picked
-                            for c in chunks:
-                                yield c
-                            return
-                        except Exception as ee:
-                            last_err = ee
+        for key in keys_to_try:
+            for base in alternate_base_urls(base_url):
+                try:
+                    chunks = await post_and_parse(base, model, key)
+                    for c in chunks:
+                        yield c
+                    return
+                except RateLimitError:
+                    last_err = RateLimitError(
+                        f"Gemini: todas as chaves excederam rate limit ({len(keys_to_try)} chaves testadas)"
+                    )
+                    break
+                except Exception as e:
+                    last_err = e
+                    msg = str(e) or repr(e)
+                    lowered = msg.lower()
+                    if "models/" in lowered and "not found for api version" in lowered:
+                        picked = await pick_model(base, key)
+                        if picked and normalize_model_name(picked) != normalize_model_name(model):
+                            try:
+                                chunks = await post_and_parse(base, picked, key)
+                                provider["model"] = picked
+                                for c in chunks:
+                                    yield c
+                                return
+                            except RateLimitError:
+                                last_err = RateLimitError(
+                                    f"Gemini: todas as chaves excederam rate limit ({len(keys_to_try)} chaves testadas)"
+                                )
+                                break
+                            except Exception as ee:
+                                last_err = ee
+                        continue
+                    if "404" in msg:
+                        picked = await pick_model(base, key)
+                        if picked and normalize_model_name(picked) != normalize_model_name(model):
+                            try:
+                                chunks = await post_and_parse(base, picked, key)
+                                provider["model"] = picked
+                                for c in chunks:
+                                    yield c
+                                return
+                            except RateLimitError:
+                                last_err = RateLimitError(
+                                    f"Gemini: todas as chaves excederam rate limit ({len(keys_to_try)} chaves testadas)"
+                                )
+                                break
+                            except Exception as ee:
+                                last_err = ee
+                                continue
+                        break
+                    # Para outros erros (não-429), tenta próxima base_url
                     continue
-                if "404" in msg:
-                    picked = await pick_model(base)
-                    if picked and normalize_model_name(picked) != normalize_model_name(
-                        model
-                    ):
-                        try:
-                            chunks = await post_and_parse(base, picked)
-                            provider["model"] = picked
-                            for c in chunks:
-                                yield c
-                            return
-                        except Exception as ee:
-                            last_err = ee
-                            continue
-                break
 
         raise last_err or Exception("Gemini: falha desconhecida")
 
@@ -949,6 +1124,7 @@ class LLMManager:
         *,
         user_context: Optional[str] = None,
         api_key_override: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncGenerator[str, None]:
         """Streaming com Groq"""
         keys_to_try: List[str] = []
@@ -957,16 +1133,16 @@ class LLMManager:
             keys_to_try = [override_key]
         else:
             keys = provider.get("keys") or []
-            tries = 1 if not isinstance(keys, list) else max(1, min(2, len(keys)))
-            for _ in range(tries):
+            for _ in range(len(keys) if keys else 1):
                 k = self._get_next_key("groq")
                 if k:
                     keys_to_try.append(k)
+
         keys_to_try = [k for k in keys_to_try if k]
         if not keys_to_try:
             raise Exception("Sem chaves Groq disponíveis")
 
-        full_prompt = self._build_full_prompt(prompt, expert, user_context)
+        full_prompt = self._build_full_prompt(prompt, expert, user_context, history=history)
 
         base_url = _normalize_openai_compatible_base_url(provider.get("base_url"))
         model = _sanitize_text(provider.get("model"))
@@ -1042,13 +1218,21 @@ class LLMManager:
             for key in keys_to_try:
                 headers["Authorization"] = f"Bearer {key}"
                 async with session.post(url, headers=headers, json=data) as response:
-                    if response.status != 200:
+                    body = ""
+                    try:
+                        body = (await response.text()) or ""
+                    except Exception:
                         body = ""
-                        try:
-                            body = (await response.text()) or ""
-                        except Exception:
-                            body = ""
-                        body = body.strip()
+                    body = body.strip()
+                    if _is_rate_limited(response.status, body):
+                        await _wait_retry_after(response, body=body)
+                        if len(keys_to_try) > 1:
+                            print(f"[llm_manager] Groq rate limit (key={key[-8:]}), tentando próxima chave")
+                            continue
+                        raise RateLimitError(
+                            f"Groq rate limit (key={key[-8:]}): {response.status}"
+                        )
+                    if response.status != 200:
                         if len(body) > 800:
                             body = body[:800] + "..."
                         lowered = body.lower()
@@ -1125,9 +1309,10 @@ class LLMManager:
         provider: Dict[str, Any],
         *,
         user_context: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncGenerator[str, None]:
         """Streaming com Ollama"""
-        full_prompt = self._build_full_prompt(prompt, expert, user_context)
+        full_prompt = self._build_full_prompt(prompt, expert, user_context, history=history)
 
         base_url = _normalize_ollama_url(provider.get("url"))
         model = _sanitize_text(provider.get("model"))
@@ -1293,9 +1478,10 @@ class LLMManager:
         provider: Dict[str, Any],
         *,
         user_context: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncGenerator[str, None]:
         """Streaming com OpenAI"""
-        full_prompt = self._build_full_prompt(prompt, expert, user_context)
+        full_prompt = self._build_full_prompt(prompt, expert, user_context, history=history)
 
         url = f"{provider['base_url']}/chat/completions"
         headers = {
@@ -1316,6 +1502,10 @@ class LLMManager:
         ) as session:
             async with session.post(url, headers=headers, json=data) as response:
                 if response.status != 200:
+                    err_body = await response.text()
+                    if _is_rate_limited(response.status, err_body):
+                        await _wait_retry_after(response, body=err_body)
+                        raise RateLimitError(f"OpenAI rate limit: {response.status}")
                     raise Exception(f"OpenAI API error: {response.status}")
 
                 async for line in response.content:
@@ -1338,9 +1528,10 @@ class LLMManager:
         *,
         user_context: Optional[str] = None,
         model_name: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncGenerator[str, None]:
         """Streaming com OpenRouter (OpenAI-compatible) — modelo específico"""
-        full_prompt = self._build_full_prompt(prompt, expert, user_context)
+        full_prompt = self._build_full_prompt(prompt, expert, user_context, history=history)
         model = model_name or provider.get("model", "nvidia/nemotron-3-nano-30b-a3b:free")
 
         url = f"{provider['base_url']}/chat/completions"
@@ -1365,8 +1556,12 @@ class LLMManager:
                 if response.status == 401:
                     raise Exception(f"OpenRouter: chave inválida")
                 if response.status != 200:
-                    err_body = (await response.read()).decode("utf-8", errors="replace")[:200]
-                    raise Exception(f"OpenRouter ({model}): status {response.status} - {err_body}")
+                    err_body = (await response.read()).decode("utf-8", errors="replace")
+                    if _is_rate_limited(response.status, err_body):
+                        await _wait_retry_after(response, body=err_body)
+                        raise RateLimitError(f"OpenRouter ({model}): rate limit - {response.status}")
+                    clipped = err_body[:200] if len(err_body) > 200 else err_body
+                    raise Exception(f"OpenRouter ({model}): status {response.status} - {clipped}")
 
                 async for line in response.content:
                     line = line.decode("utf-8").strip()
@@ -1387,6 +1582,7 @@ class LLMManager:
         provider: Dict[str, Any],
         *,
         user_context: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncGenerator[str, None]:
         """Tenta múltiplos modelos OpenRouter; falha apenas se todos rejeitarem."""
         models = provider.get("models", [provider.get("model", "")])
@@ -1401,6 +1597,7 @@ class LLMManager:
                 agen = self._stream_openrouter(
                     prompt, expert, provider,
                     user_context=user_context, model_name=model,
+                    history=history,
                 )
                 first = await agen.__anext__()
                 yield first
@@ -1413,6 +1610,57 @@ class LLMManager:
                 print(f"[llm_manager] OpenRouter model '{model_debug}' falhou: {last_error}")
 
         raise Exception(f"OpenRouter: todos os modelos falharam. Último erro: {last_error}")
+
+    async def get_active_provider(
+        self, preferred_provider: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Retorna qual provider seria selecionado agora, sem fazer chamada LLM real.
+        Simula a lógica de stream_generate() apenas com estado local + env."""
+        result: Dict[str, Any] = {
+            "provider": None,
+            "model": None,
+            "has_key": False,
+            "fallback": False,
+            "inferred_from": "none",
+        }
+
+        if preferred_provider:
+            prov = self.providers.get(preferred_provider)
+            if prov and prov.get("enabled"):
+                keys = prov.get("keys", [])
+                valid = [k for k in keys if _sanitize_api_key(k)]
+                if valid:
+                    result["provider"] = preferred_provider
+                    result["model"] = prov.get("model")
+                    result["has_key"] = True
+                    result["fallback"] = False
+                    result["inferred_from"] = "user_settings"
+                    return result
+
+        for provider_id in self.provider_order:
+            if provider_id not in self.providers:
+                continue
+            prov = self.providers[provider_id]
+            if not prov.get("enabled"):
+                continue
+            keys = prov.get("keys", [])
+            valid = [k for k in keys if _sanitize_api_key(k)]
+            if valid:
+                result["provider"] = provider_id
+                result["model"] = prov.get("model")
+                result["has_key"] = True
+                result["fallback"] = bool(preferred_provider)
+                result["inferred_from"] = "env"
+                return result
+
+        first = self.provider_order[0] if self.provider_order else "gemini"
+        result["provider"] = first
+        fallback_prov = self.providers.get(first)
+        result["model"] = fallback_prov.get("model") if fallback_prov else None
+        result["has_key"] = False
+        result["fallback"] = bool(preferred_provider)
+        result["inferred_from"] = "env"
+        return result
 
 
 # Instância global

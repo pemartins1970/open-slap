@@ -33,8 +33,17 @@ Open Slap! is a **desktop-local** assistant — a server running on your machine
 open-slap/
 ├── backend/                  # Python/FastAPI server
 ├── frontend/                 # React + Vite UI
-├── docs/                     # Documentation
-├── open-slap-electron-windows/  # Desktop app (Electron)
+├── docs/                     # Documentation (organizada por categoria)
+│   ├── changelog/
+│   ├── journal/
+│   ├── specs/
+│   ├── roadmap/
+│   ├── qa/
+│   ├── metrics/
+│   ├── state/
+│   ├── infrastructure/
+│   ├── reference/
+│   └── manifest/
 ├── .env.example              # Environment variables template
 └── README.md
 ```
@@ -148,10 +157,11 @@ npm run build
 
 ## Documentation
 
-- [Installation Guide](docs/INSTALLATION.md)
-- [Dev Journal](docs/DEV_JOURNAL.md)
-- [Changelog](docs/CHANGELOG.md)
-- [License](docs/LICENCE.md)
+- [Installation Guide](docs/infrastructure/INSTALLATION.md)
+- [Dev Journal](docs/journal/DEV_JOURNAL.md)
+- [Changelog](docs/changelog/CHANGELOG.md)
+- [Manifesto](docs/manifest/MANIFESTO.md)
+- [License](docs/reference/LICENCE.md)
 
 ---
 

@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-06-09T17:52:36.263114",
+  "session": "e2e-db-1781038350",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "Para fins de teste E2E: diga somente a palavra OK.",
+  "output": "OK....",
+  "reward": 0.0
+}

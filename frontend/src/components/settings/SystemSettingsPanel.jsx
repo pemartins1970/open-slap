@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 export default function SystemSettingsPanel({
   styles,
-  t,
-  lang,
   settingsLoading,
   doctorError,
   doctorReport,
@@ -17,11 +16,10 @@ export default function SystemSettingsPanel({
   systemMapUpdatedAt,
   systemMapText,
   fetchSystemMap,
-  planAutoApproveInformational,
   planAutoApproveAll,
-  onPlanAutoApproveInformationalChange,
   onPlanAutoApproveAllChange,
 }) {
+  const { t } = useTranslation();
   const [expandedChecks, setExpandedChecks] = useState({});
 
   const toggleCheck = (id) => {
@@ -57,8 +55,8 @@ export default function SystemSettingsPanel({
       const s = doctorReport.llm_settings;
       content = (
         <div style={{ marginTop: '8px', fontSize: '12px', fontFamily: 'var(--mono)', color: 'var(--text-dim)' }}>
-          <div>{lang === 'pt' ? 'Provedor' : 'Provider'}: {s.provider || '—'}</div>
-          <div>{lang === 'pt' ? 'Modelo' : 'Model'}: {s.model || '—'}</div>
+          <div>{t('provider')}: {s.provider || '—'}</div>
+          <div>{t('model')}: {s.model || '—'}</div>
         </div>
       );
     } else if (id === 'api_reachable' && doctorReport?.connectivity?.length) {
@@ -74,8 +72,8 @@ export default function SystemSettingsPanel({
               background: 'rgba(255,255,255,0.03)'
             }}>
               {conn.provider}: {conn.ok
-                ? (lang === 'pt' ? `OK (${conn.latency_ms}ms)` : `OK (${conn.latency_ms}ms)`)
-                : (lang === 'pt' ? `Falhou — ${conn.error || 'sem resposta'}` : `Failed — ${conn.error || 'no response'}`)}
+                ? `OK (${conn.latency_ms}ms)`
+                : `${t('connectivity_failed')} ${conn.error || t('connectivity_no_response')}`}
             </div>
           ))}
         </div>
@@ -93,7 +91,7 @@ export default function SystemSettingsPanel({
   return (
     <>
       <div style={styles.settingsSection}>
-        <div style={styles.settingsSectionTitle}>{lang === 'pt' ? 'Fluxo de Trabalho' : 'Workflow'}</div>
+        <div style={styles.settingsSectionTitle}>{t('workflow')}</div>
         <div style={{
           background: 'var(--bg-panel)',
           borderRadius: '10px',
@@ -102,43 +100,13 @@ export default function SystemSettingsPanel({
           display: 'grid',
           gap: '14px'
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <div style={{ fontSize: '13px', color: 'var(--text)', fontFamily: 'var(--sans)', marginBottom: '2px' }}>
-                {lang === 'pt' ? 'Aprovação automática de planos informativos' : 'Auto-approve informational plans'}
+                {t('auto_approve_all_plans')}
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--sans)' }}>
-                {lang === 'pt' ? 'Pesquisas, análises e documentação executam sem aprovação' : 'Research, analysis and docs run without approval'}
-              </div>
-            </div>
-            <label style={{ position: 'relative', display: 'inline-block', width: '40px', height: '22px', cursor: 'pointer' }}>
-              <input type="checkbox" style={{ opacity: 0, width: 0, height: 0 }}
-                checked={planAutoApproveInformational}
-                onChange={(e) => onPlanAutoApproveInformationalChange(e.target.checked)}
-              />
-              <span style={{
-                position: 'absolute', inset: 0, borderRadius: '22px',
-                background: planAutoApproveInformational ? 'var(--green)' : 'rgba(255,255,255,0.15)',
-                transition: '0.2s'
-              }}>
-                <span style={{
-                  position: 'absolute', top: '2px', left: planAutoApproveInformational ? '20px' : '2px',
-                  width: '18px', height: '18px', borderRadius: '50%', background: 'white',
-                  transition: '0.2s'
-                }} />
-              </span>
-            </label>
-          </div>
-
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: '13px', color: 'var(--text)', fontFamily: 'var(--sans)', marginBottom: '2px' }}>
-                {lang === 'pt' ? 'Aprovação automática de todos os planos' : 'Auto-approve all plans'}
-              </div>
-              <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--sans)' }}>
-                {lang === 'pt'
-                  ? 'Todos os planos executam automaticamente. Ações irreversíveis sem confirmação.'
-                  : 'All plans run automatically. Irreversible actions without confirmation.'}
+                {t('auto_approve_all_plans_desc')}
               </div>
             </div>
             <label style={{ position: 'relative', display: 'inline-block', width: '40px', height: '22px', cursor: 'pointer' }}>
@@ -263,7 +231,7 @@ export default function SystemSettingsPanel({
         <div style={{ ...styles.doctorCard, marginTop: '12px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
             <div style={{ fontSize: '12px', color: 'var(--text)', fontFamily: 'var(--sans)' }}>
-              {lang === 'pt' ? 'Mapa do sistema' : 'System map'}
+              {t('system_map')}
             </div>
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
               <button
@@ -271,14 +239,14 @@ export default function SystemSettingsPanel({
                 onClick={() => fetchSystemMap({ silent: false, refresh: false })}
                 disabled={settingsLoading || systemMapLoading}
               >
-                {systemMapLoading ? t('loading') : (lang === 'pt' ? 'Carregar' : 'Load')}
+                {systemMapLoading ? t('loading') : t('load')}
               </button>
               <button
                 style={styles.settingsPrimaryButton}
                 onClick={() => fetchSystemMap({ silent: false, refresh: true })}
                 disabled={settingsLoading || systemMapLoading}
               >
-                {systemMapLoading ? t('running') : (lang === 'pt' ? 'Atualizar' : 'Refresh')}
+                {systemMapLoading ? t('running') : t('refresh')}
               </button>
             </div>
           </div>
@@ -286,9 +254,7 @@ export default function SystemSettingsPanel({
             <div style={{ ...styles.settingsError, marginTop: '10px' }}>{systemMapError}</div>
           ) : null}
           <div style={{ marginTop: '10px', fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
-            {lang === 'pt'
-              ? `Atualizado em: ${systemMapUpdatedAt || '—'}`
-              : `Updated at: ${systemMapUpdatedAt || '—'}`}
+            {t('updated_at')} {systemMapUpdatedAt || '—'}
           </div>
           {systemMapText ? (
             <pre style={{

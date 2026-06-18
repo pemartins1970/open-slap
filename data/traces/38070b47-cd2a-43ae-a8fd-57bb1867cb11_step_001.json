@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-06-12T17:56:19.666842",
+  "session": "38070b47-cd2a-43ae-a8fd-57bb1867cb11",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "Quero iniciar um novo projeto.",
+  "output": "\u00d3timo! Para iniciarmos seu novo projeto de forma estruturada, preciso de algumas informa\u00e7\u00f5es iniciai...",
+  "reward": 0.0
+}

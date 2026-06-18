@@ -443,45 +443,56 @@ export function buildAppAuthStyles({ connected } = {}) {
     inputArea: {
       padding: '16px 24px',
       borderTop: '1px solid var(--border)',
-      background: 'var(--bg2)'
+      background: 'var(--bg-panel)'
     },
     inputContainer: {
       display: 'flex',
-      gap: '12px',
-      alignItems: 'flex-end'
+      flexDirection: 'column',
+      gap: '0px',
+      border: '1px solid var(--border)',
+      borderRadius: '12px',
+      background: 'var(--bg2)'
     },
-    inputWrapper: {
-      flex: 1
+    inputBottomBar: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '12px',
+      padding: '2px 6px 6px'
     },
     input: {
       width: '100%',
-      background: 'var(--bg3)',
-      border: '1px solid var(--border)',
-      borderRadius: '8px',
-      padding: '12px 16px',
+      background: 'transparent',
+      border: 'none',
+      padding: '12px 14px 4px',
       fontSize: '14px',
       color: 'var(--text-bright)',
       fontFamily: 'var(--sans)',
       outline: 'none',
       resize: 'none',
-      minHeight: '48px',
-      maxHeight: '200px'
+      overflow: 'hidden',
+      minHeight: '44px',
+      maxHeight: '200px',
+      lineHeight: '1.5'
     },
     sendButton: {
       background: 'var(--amber)',
       border: 'none',
       borderRadius: '8px',
-      padding: '12px 20px',
+      width: '32px',
+      height: '32px',
       color: 'var(--bg)',
-      fontSize: '14px',
-      fontWeight: '600',
-      fontFamily: 'var(--mono)',
+      fontSize: '16px',
+      fontWeight: '700',
       cursor: 'pointer',
       transition: 'all 0.15s',
-      height: '48px'
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '0'
     },
     sendButtonDisabled: {
-      opacity: 0.6,
+      opacity: 0.4,
       cursor: 'not-allowed'
     },
     loadingScreen: {
@@ -570,6 +581,17 @@ export function buildAppAuthStyles({ connected } = {}) {
       gap: '10px',
       justifyContent: 'flex-end',
       marginTop: '12px'
+    },
+    settingsTab: {
+      background: 'transparent',
+      border: '1px solid var(--border)',
+      borderRadius: '8px',
+      padding: '8px 14px',
+      color: 'var(--text)',
+      fontSize: '12px',
+      fontFamily: 'var(--mono)',
+      cursor: 'pointer',
+      transition: 'all 0.15s'
     },
     settingsPrimaryButton: {
       background: 'var(--amber)',
@@ -693,6 +715,20 @@ export function buildAppAuthStyles({ connected } = {}) {
       justifyContent: 'space-between',
       alignItems: 'center',
       gap: '12px'
+    },
+    modalClose: {
+      background: 'transparent',
+      border: '1px solid var(--border)',
+      borderRadius: '6px',
+      width: '32px',
+      height: '32px',
+      color: 'var(--text)',
+      fontSize: '14px',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      transition: 'all 0.15s'
     },
     modalTitle: {
       fontSize: '14px',

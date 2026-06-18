@@ -1,36 +1,24 @@
-/**
- * 🔐 LOGIN - Página de Autenticação
- * Componente de login/register segundo WINDSURF_AGENT.md
- *
- * CORREÇÃO: recebe onLogin/onRegister como props do App_auth.jsx.
- * Instanciar useAuth() aqui criaria um estado isolado — o App pai
- * nunca ficaria sabendo do login e o redirect não dispararia.
- */
-
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 
-// Logo path: detecta ambiente e usa caminho apropriado
 const getLogoSrc = () => {
-  // No Electron, tenta caminhos relativos ao app bundle
   if (window.location.protocol === 'file:') {
-    // Caminhos possíveis no Electron empacotado
     const possiblePaths = [
       './open_slap.png',
       '../open_slap.png',
       '../../open_slap.png',
       'open_slap.png'
     ];
-    // Retorna o primeiro (mais provável)
     return possiblePaths[0];
   }
-  // Web - caminho absoluto do servidor
   return '/open_slap.png';
 };
 
 const OPEN_SLAP_LOGO_SRC = getLogoSrc();
 
-const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetConfirm, t }) => {
+const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetConfirm }) => {
+  const { t } = useTranslation();
   const [view, setView] = useState('auth');
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
@@ -199,23 +187,20 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
     setMsg({ ok: false, text: '' });
 
     try {
-      // Chama a função do pai (App_auth.jsx) — mesmo estado, mesmo hook
       const result = isLogin
         ? await onLogin(email, password)
         : await onRegister(email, password);
 
       if (!result.success) {
-        // Se a API retornou erro (ex: 400), exibe o erro real vindo do backend
         const data = result.data || {};
-        setMsg({ ok: false, text: data.detail || data.msg || result.error || 'Erro desconhecido' });
+        setMsg({ ok: false, text: data.detail || data.msg || result.error || t('error_unknown') });
       } else {
-        if (!isLogin) setMsg({ ok: true, text: 'Cadastro realizado!' });
-        // Estado do App pai já foi atualizado → guard de rota redireciona
+        if (!isLogin) setMsg({ ok: true, text: t('registration_success') });
         navigate('/');
       }
     } catch (err) {
       console.error('Submit error:', err);
-      setMsg({ ok: false, text: 'Erro de conexão: ' + err.message });
+      setMsg({ ok: false, text: t('connection_error') + err.message });
     } finally {
       setLoading(false);
     }
@@ -238,17 +223,17 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
             console.error('Failed to parse response:', parseError);
           }
         }
-        setMsg({ ok: false, text: data?.detail || data?.msg || result?.error || t ? t('password_reset_error') : 'Could not request password reset' });
+        setMsg({ ok: false, text: data?.detail || data?.msg || result?.error || t('password_reset_error') });
       } else {
         const msg = result.recoveryCode
-          ? `${t ? t('recovery_code') : 'Recovery code'}: ${result.recoveryCode}`
-          : t ? t('follow_instructions') : 'Follow the instructions to continue';
+          ? `${t('recovery_code')}: ${result.recoveryCode}`
+          : t('follow_instructions');
         setResetMessage(msg);
         setResetStep(2);
       }
     } catch (err) {
       console.error('Password reset error:', err);
-      setMsg({ ok: false, text: t ? t('unexpected_error') : 'Unexpected error. Please try again.' });
+      setMsg({ ok: false, text: t('unexpected_error') });
     } finally {
       setLoading(false);
     }
@@ -271,16 +256,16 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
             console.error('Failed to parse response:', parseError);
           }
         }
-        setMsg({ ok: false, text: data?.detail || data?.msg || result?.error || t ? t('password_reset_confirm_error') : 'Could not reset password' });
+        setMsg({ ok: false, text: data?.detail || data?.msg || result?.error || t('password_reset_confirm_error') });
       } else {
-        setResetMessage(t ? t('password_reset_success') : 'Password reset. You can now sign in.');
+        setResetMessage(t('password_reset_success'));
         setView('auth');
         setIsLogin(true);
         setPassword('');
       }
     } catch (err) {
       console.error('Password reset confirm error:', err);
-      setMsg({ ok: false, text: t ? t('unexpected_error') : 'Unexpected error. Please try again.' });
+      setMsg({ ok: false, text: t('unexpected_error') });
     } finally {
       setLoading(false);
     }
@@ -299,26 +284,24 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
   };
 
   const passwordRules = [
-    { text: t ? t('min_8_chars') : 'Mínimo 8 caracteres', valid: password.length >= 8 },
-    { text: t ? t('one_uppercase') : '1 letra maiúscula', valid: /[A-Z]/.test(password) },
-    { text: t ? t('one_number') : '1 número', valid: /[0-9]/.test(password) }
+    { text: t('min_8_chars'), valid: password.length >= 8 },
+    { text: t('one_uppercase'), valid: /[A-Z]/.test(password) },
+    { text: t('one_number'), valid: /[0-9]/.test(password) }
   ];
 
   return (
     <div style={styles.container}>
-      {/* Left Column - Logo with Gradient Background */}
       <div style={styles.leftColumn}>
         <div style={styles.logoContainer}>
           <img src={OPEN_SLAP_LOGO_SRC} alt="Open Slap" style={styles.logoImage} />
         </div>
       </div>
 
-      {/* Right Column - Login Form */}
       <div style={styles.rightColumn}>
         <div style={styles.card}>
           <h1 style={styles.title}>
             <span>
-              {view === 'auth' ? (isLogin ? (t ? t('sign_in') : 'Sign in') : (t ? t('create_account') : 'Create account')) : (t ? t('reset_password') : 'Reset password')}
+              {view === 'auth' ? (isLogin ? t('sign_in') : t('create_account')) : t('reset_password')}
             </span>
           </h1>
 
@@ -333,7 +316,7 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
             <form style={styles.form} onSubmit={handleSubmit}>
               <input
                 type="email"
-                placeholder={t ? t('email') : 'Email'}
+                placeholder={t('email')}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 style={inputStyle('email')}
@@ -344,7 +327,7 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
 
               <input
                 type="password"
-                placeholder={t ? t('password') : 'Password'}
+                placeholder={t('password')}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 style={inputStyle('password')}
@@ -376,7 +359,7 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
                   ...(loading || (!isLogin && !isPasswordValid()) ? styles.buttonDisabled : {})
                 }}
               >
-                {loading ? (t ? t('processing') : 'Processing...') : (isLogin ? (t ? t('sign_in_btn') : 'Sign in') : (t ? t('create_account_btn') : 'Create account'))}
+                {loading ? t('processing') : (isLogin ? t('sign_in_btn') : t('create_account_btn'))}
               </button>
             </form>
 
@@ -395,13 +378,13 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
                   setMsg({ ok: false, text: '' });
                 }}
               >
-                {t ? t('forgot_password') : 'Forgot my password'}
+                {t('forgot_password')}
               </a>
             </div>
 
             <div style={styles.toggle}>
               <span style={{ color: 'var(--text-dim)', marginRight: '8px' }}>
-                {isLogin ? (t ? t('no_account') : "Don't have an account?") : (t ? t('have_account') : 'Already have an account?')}
+                {isLogin ? t('no_account') : t('have_account')}
               </span>
               <a
                 href="#"
@@ -412,7 +395,7 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
                   setMsg({ ok: false, text: '' });
                 }}
               >
-                {isLogin ? (t ? t('create_account') : 'Create account') : (t ? t('sign_in') : 'Sign in')}
+                {isLogin ? t('create_account') : t('sign_in')}
               </a>
             </div>
           </>
@@ -428,7 +411,7 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
               <form style={styles.form} onSubmit={handlePasswordResetRequest}>
                 <input
                   type="email"
-                  placeholder={t ? t('email') : 'Email'}
+                  placeholder={t('email')}
                   value={resetEmail}
                   onChange={(e) => setResetEmail(e.target.value)}
                   style={inputStyle('resetEmail')}
@@ -445,14 +428,14 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
                     ...(loading ? styles.buttonDisabled : {})
                   }}
                 >
-                  {loading ? (t ? t('processing') : 'Processing...') : (t ? t('send_code') : 'Send code')}
+                  {loading ? t('processing') : t('send_code')}
                 </button>
               </form>
             ) : (
               <form style={styles.form} onSubmit={handlePasswordResetConfirm}>
                 <input
                   type="email"
-                  placeholder={t ? t('email') : 'Email'}
+                  placeholder={t('email')}
                   value={resetEmail}
                   onChange={(e) => setResetEmail(e.target.value)}
                   style={inputStyle('resetEmail')}
@@ -463,7 +446,7 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
 
                 <input
                   type="text"
-                  placeholder={t ? t('code') : 'Code'}
+                  placeholder={t('code')}
                   value={resetCode}
                   onChange={(e) => setResetCode(e.target.value)}
                   style={inputStyle('resetCode')}
@@ -474,7 +457,7 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
 
                 <input
                   type="password"
-                  placeholder={t ? t('new_password') : 'New password'}
+                  placeholder={t('new_password')}
                   value={resetNewPassword}
                   onChange={(e) => setResetNewPassword(e.target.value)}
                   style={inputStyle('resetNewPassword')}
@@ -491,7 +474,7 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
                     ...(loading ? styles.buttonDisabled : {})
                   }}
                 >
-                  {loading ? (t ? t('processing') : 'Processing...') : (t ? t('reset_password_btn') : 'Reset password')}
+                  {loading ? t('processing') : t('reset_password_btn')}
                 </button>
 
                 <div style={{ textAlign: 'center', marginTop: '4px' }}>
@@ -507,7 +490,7 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
                       setMsg({ ok: false, text: '' });
                     }}
                   >
-                    {t ? t('send_new_code') : 'Send a new code'}
+                    {t('send_new_code')}
                   </a>
                 </div>
               </form>
@@ -523,7 +506,7 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
                   setMsg({ ok: false, text: '' });
                 }}
               >
-                {t ? t('back') : 'Back'}
+                {t('back')}
               </a>
             </div>
           </>

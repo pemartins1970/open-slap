@@ -73,6 +73,10 @@ class MoERouter:
                     "Regra: apresente um plano técnico detalhado (TDD — Technical Design Document), mas seja pragmático: quando o pedido exigir ação concreta, gere também comandos CLI específicos prontos para execução.\n\n"
                     "Segurança de credenciais: nunca solicite chaves de API ou secrets no chat. Se precisar, oriente o usuário a usar Settings → LLM (token: [[open_settings:llm_api_key]]).\n\n"
                     "Aprendizado: use as preferências e fatos já registrados na memória disponível no contexto.\n\n"
+                    "Resposta direta vs Orquestração:\n"
+                    "- Responda diretamente em texto para: perguntas, análises, explicações, revisões, planos textuais e qualquer pedido que não exija modificar o sistema.\n"
+                    "- Use orquestração (bloco plan) APENAS para: ações que modificam arquivos, executam comandos, fazem chamadas externas ou persistem dados no projeto.\n"
+                    "- Em caso de dúvida, prefira resposta direta. O usuário pode pedir execução explicitamente se precisar.\n\n"
                     "PLAN (Análise):\n"
                     "- Objetivo de negócio\n"
                     "- Arquitetura proposta (texto/Mermaid)\n"
@@ -125,6 +129,10 @@ class MoERouter:
                     "Você é o CFO — orquestrador de Finanças. Fluxo: PLAN → DELEGATE → EXECUTE.\n"
                     "Regra: não recomende ações irreversíveis sem um plano aprovado.\n\n"
                     "Segurança de credenciais: nunca solicite chaves de API ou secrets no chat. Se precisar, oriente o usuário a usar Settings → LLM (token: [[open_settings:llm_api_key]]).\n\n"
+                    "Resposta direta vs Orquestração:\n"
+                    "- Responda diretamente em texto para: perguntas, análises, explicações, revisões, planos textuais e qualquer pedido que não exija modificar o sistema.\n"
+                    "- Use orquestração (bloco plan) APENAS para: ações que modificam arquivos, executam comandos, fazem chamadas externas ou persistem dados no projeto.\n"
+                    "- Em caso de dúvida, prefira resposta direta. O usuário pode pedir execução explicitamente se precisar.\n\n"
                     "PLAN:\n"
                     "- Objetivo (reduzir custos/aumentar receita/planejamento)\n"
                     "- Horizonte (30/90/180 dias)\n"
@@ -171,6 +179,10 @@ class MoERouter:
                     "Você é o COO — orquestrador de Operações. Fluxo: PLAN → DELEGATE → EXECUTE.\n"
                     "Regra: não proponha mudanças organizacionais/processuais grandes sem um plano aprovado e métricas de sucesso.\n\n"
                     "Segurança de credenciais: nunca solicite chaves de API ou secrets no chat. Se precisar, oriente o usuário a usar Settings → LLM (token: [[open_settings:llm_api_key]]).\n\n"
+                    "Resposta direta vs Orquestração:\n"
+                    "- Responda diretamente em texto para: perguntas, análises, explicações, revisões, planos textuais e qualquer pedido que não exija modificar o sistema.\n"
+                    "- Use orquestração (bloco plan) APENAS para: ações que modificam arquivos, executam comandos, fazem chamadas externas ou persistem dados no projeto.\n"
+                    "- Em caso de dúvida, prefira resposta direta. O usuário pode pedir execução explicitamente se precisar.\n\n"
                     "PLAN:\n"
                     "- Área (suporte, vendas, entrega, logística, produto)\n"
                     "- Situação atual (processos, papéis, SLAs)\n"
@@ -345,7 +357,7 @@ class MoERouter:
                 capabilities="Faz análise e modelagem de dados (estatística, ML, métricas, visualização) e valida hipóteses com rigor.",
             ),
             Expert(
-                id="project",
+                id="pmo",
                 name="Gestor de Projeto",
                 icon="🗂️",
                 color="#22c55e",
@@ -375,6 +387,64 @@ class MoERouter:
                 ),
                 description="Especialista em planejamento, escopo e priorização",
                 capabilities="Estrutura execução: define escopo, backlog, roadmap, critérios de aceitação, riscos e registra decisões/atividades.",
+            ),
+            Expert(
+                id="qa",
+                name="QA Lead — Qualidade e Testes",
+                icon="🧪",
+                color="#f59e0b",
+                keywords=[
+                    "qa",
+                    "qualidade",
+                    "quality",
+                    "teste",
+                    "testes",
+                    "test",
+                    "tests",
+                    "testing",
+                    "bug",
+                    "bugs",
+                    "falha",
+                    "falhas",
+                    "erro",
+                    "erros",
+                    "regressão",
+                    "regression",
+                    "cobertura",
+                    "coverage",
+                    "pytest",
+                    "jest",
+                    "playwright",
+                    "unitário",
+                    "unit test",
+                    "integração",
+                    "integration test",
+                    "e2e",
+                    "end to end",
+                    "edge case",
+                    "test plan",
+                    "plano de teste",
+                    "test case",
+                    "caso de teste",
+                    "mock",
+                    "fixture",
+                    "assert",
+                    "validação",
+                    "revisar código",
+                    "code review",
+                    "traceback",
+                    "stacktrace",
+                ],
+                prompt=(
+                    "Você é o QA Lead do Open Slap!. Garanta qualidade em todo o ciclo: "
+                    "análise de requisitos, estratégia de testes, revisão de código e validação de entregáveis.\n\n"
+                    "Quando identificar um bug: sintoma → causa raiz → impacto → fix.\n"
+                    "Quando propor testes: escreva código completo pronto para executar.\n"
+                    "Nunca aprove um entregável sem critérios de aceite claros.\n"
+                    "Responda sempre no mesmo idioma utilizado pelo usuário na mensagem recebida. Seja direto e priorize o que bloqueia a entrega."
+                ),
+                description="Garante qualidade: testes, revisão de código, análise de falhas e critérios de aceite",
+                capabilities="Escreve test plans, gera casos de teste automatizados, analisa bugs e revisa código com foco em cobertura e prevenção de regressões.",
             ),
             Expert(
                 id="general",
@@ -432,16 +502,24 @@ class MoERouter:
                     "- Evite perguntar ao usuário por informações que já estejam no contexto.\n\n"
                     "Execução e Interação:\n"
                     "- Responda ao usuário de forma natural. Narre seu raciocínio (Chain of Thought narrativo).\n"
-                    "- REGISTRO DE PROGRESSO: Durante entrevistas ou processos de design, use a tag `[[add_step: Descrição]]` para registrar marcos no menu lateral (ex: \"[[add_step: Entender requisitos]]\"). Isso informa o progresso de forma silenciosa.\n"
+                    "- REGISTRO DE PROGRESSO: Use a tag `[[add_step: Descrição]]` APENAS durante fluxos de design multi-etapa explicitamente iniciados pelo usuário (ex: design de sistema, entrevista de requisitos). NUNCA use em respostas simples ou análises pontuais.\n"
                     "- Se for um início de fluxo técnico simples, seja curta, mas em fases de design, seja explicativa.\n\n"
-                    "Plano executável (quando necessário):\n"
-                    "- Se o pedido exigir execução/alteração no projeto, crie um plano em um bloco ```plan``` para que o sistema execute.\n"
+                    "Geração de artefatos:\n"
+                    "- Use <FILES_JSON> APENAS para persistir conteúdo já gerado — nunca para salvar código que deveria ser executado.\n"
+                    "- Sequência obrigatória ao gerar arquivo com conteúdo dinâmico: "
+                    "(1) execute o código via python-inline, "
+                    "(2) capture o output, "
+                    "(3) persista o output com <FILES_JSON>.\n"
+                    "- Ao concluir tarefa que gerou arquivo, leia o arquivo e apresente o conteúdo final ao usuário.\n\n"
+                    "Plano executável (apenas quando necessário):\n"
+                    "- SOMENTE crie um bloco ```plan``` se o pedido exigir uma ação com efeito colateral real: modificar arquivos, executar comandos no sistema, fazer chamadas externas ou persistir dados.\n"
+                    "- NÃO crie plano para: perguntas, análises, explicações, geração de texto, criação de planos de teste, revisões de código ou qualquer resposta que seja puramente textual.\n"
                     "- Formato: uma linha por tarefa, com \"título | skill_id\".\n"
                     "- Use skill_id entre: cto, cfo, coo, project, backend, frontend, devops, security, data_science, software_operator.\n"
                     "- Regra prática: para pedidos simples com automação, crie diretamente a tarefa software_operator; para pedidos complexos, delegue ao orquestrador certo e depois às tarefas de execução.\n\n"
                     "Documentação e rastreio:\n"
-                    "- Toda execução relevante deve terminar com uma tarefa final: \"Gerente de Projeto: registrar atividades e decisões no TODO | project\".\n"
-                    "- Se você delegar (CTO/CFO/COO), sempre inclua essa tarefa project no final do plano.\n\n"
+                    "- Inclua a tarefa de registro no TODO apenas se o usuário explicitamente pedir tracking ou se a execução tiver impacto significativo no projeto (ex: deploy, migração de banco, refatoração grande).\n"
+                    "- Para respostas textuais e análises, NUNCA inclua step de project no plano.\n\n"
                     "Regra de ouro (credenciais): você nunca solicita chaves de API, tokens ou secrets no chat. Se precisar orientar configuração, direcione o usuário para Settings → LLM e, se necessário, inclua o token [[open_settings:llm_api_key]] para abrir o campo.\n\n"
                     "Aprendizado: use a memória do usuário disponível no contexto para adaptar o seu estilo (ritmo, concisão e preferências) ao longo do tempo.\n\n"
                     "Capacidades:\n"
@@ -615,8 +693,8 @@ class MoERouter:
             if pattern.search(text):
                 matches += 1
 
-        # Normalizar pelo número de patterns
-        return matches / len(patterns) if patterns else 0.0
+        # Normalizar pelo número de patterns (cap 15 para não penalizar experts com muitas keywords)
+        return matches / min(len(patterns), 15) if patterns else 0.0
 
     def select_expert(
         self, text: str, force_expert_id: Optional[str] = None

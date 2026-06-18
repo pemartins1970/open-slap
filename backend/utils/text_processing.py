@@ -6,6 +6,16 @@ import re
 from typing import Dict, Any, List
 
 
+def strip_internal_markup(text: str) -> str:
+    """Remove markup interno de mensagens: [[add_step:]], <FILES_JSON>, <COMMAND_JSON>."""
+    text = re.sub(r'\[\[add_step:[^\]]*\]\]', '', text)
+    text = re.sub(r'</?FILES_JSON>', '', text)
+    text = re.sub(r'</?COMMAND_JSON>', '', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = text.strip()
+    return text
+
+
 def strip_assistant_directives(text: str) -> str:
     """Remove diretivas especiais do assistant do texto"""
     s = (text or "").strip()

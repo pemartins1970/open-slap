@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-06-12T09:44:02.068436",
+  "session": "0623b93c-f6af-4093-aa02-dbfc35c75073",
+  "step": 1,
+  "harness": {
+    "model": "gemini-2.5-flash"
+  },
+  "input": "Estamos online?",
+  "output": "Sim, estamos online e prontos para ajudar. Como posso auxili\u00e1-lo hoje?...",
+  "reward": 0.0
+}

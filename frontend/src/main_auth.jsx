@@ -4,7 +4,8 @@
  */
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App_auth.jsx';
+import { AuthProvider } from './hooks/AuthContext';
+import App from './App_auth_modular.jsx';
 
 // CSS Variables conforme WINDSURF_AGENT.md
 const style = document.createElement('style');
@@ -197,4 +198,7 @@ style.textContent = `
 document.head.appendChild(style);
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
+root.render(<AuthProvider><App /></AuthProvider>);
+
+// Hide loading screen now that React has started
+document.documentElement.classList.add('loaded');

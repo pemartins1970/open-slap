@@ -1,122 +1,76 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Header from './Header';
 import LeftSidebar from './LeftSidebar';
 import RightSidebar from './RightSidebar';
-import MainContent from './MainContent';
 
-/**
- * AppLayout - Layout principal da aplicação com header, sidebars e conteúdo.
- * 
- * @param {Object} props
- * @param {Object} props.styles - Estilos
- * @param {Object} props.user - Dados do usuário
- * @param {boolean} props.leftSidebarCollapsed - Se a sidebar esquerda está colapsada
- * @param {boolean} props.rightSidebarCollapsed - Se a sidebar direita está colapsada
- * @param {Function} props.setLeftSidebarCollapsed - Toggle da sidebar esquerda
- * @param {Function} props.setRightSidebarCollapsed - Toggle da sidebar direita
- * @param {Object} props.leftSidebarProps - Props para a sidebar esquerda
- * @param {Object} props.rightSidebarProps - Props para a sidebar direita
- * @param {Object} props.mainContentProps - Props para o conteúdo principal
- * @param {Function} props.t - Função de tradução
- */
 const AppLayout = ({
   styles,
   user,
   leftSidebarCollapsed,
-  rightSidebarCollapsed,
   setLeftSidebarCollapsed,
-  setRightSidebarCollapsed,
-  leftSidebarProps,
-  rightSidebarProps,
-  mainContentProps,
-  t
+  children,
+  connected,
+  runtimeLlmLabel,
+  onSettingsClick,
+  onLogout,
+  conversations,
+  currentConversation,
+  onSelectConversation,
+  onCreateConversation,
+  centerView,
+  onNavigate
 }) => {
   const [isMobile, setIsMobile] = useState(false);
+  const [hideRightPanel, setHideRightPanel] = useState(false);
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 
-  // Detect mobile view
-  React.useEffect(() => {
-    const handleResize = () => {
-      setIsMobile(window.innerWidth < 768);
+  useEffect(() => {
+    const checkViewport = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      setHideRightPanel(window.innerWidth < 900);
     };
-
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    checkViewport();
+    window.addEventListener('resize', checkViewport);
+    return () => window.removeEventListener('resize', checkViewport);
   }, []);
 
-  const handleToggleLeftSidebar = () => {
-    setLeftSidebarCollapsed(!leftSidebarCollapsed);
-  };
-
-  const handleToggleRightSidebar = () => {
-    setRightSidebarCollapsed(!rightSidebarCollapsed);
-  };
-
-  const layoutClasses = {
-    ...styles.appLayout,
-    ...(isMobile ? styles.appLayoutMobile : {}),
-    ...(leftSidebarCollapsed ? styles.appLayoutLeftCollapsed : {}),
-    ...(rightSidebarCollapsed ? styles.appLayoutRightCollapsed : {})
-  };
-
   return (
-    <div style={layoutClasses}>
-      {/* Header */}
+    <div style={{ ...styles.app, height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <Header
         styles={styles}
         user={user}
         leftSidebarCollapsed={leftSidebarCollapsed}
-        rightSidebarCollapsed={rightSidebarCollapsed}
-        onToggleLeftSidebar={handleToggleLeftSidebar}
-        onToggleRightSidebar={handleToggleRightSidebar}
+        onToggleLeftSidebar={() => setLeftSidebarCollapsed(v => !v)}
         isMobile={isMobile}
-        t={t}
+        onSettingsClick={onSettingsClick}
+        runtimeLlmLabel={runtimeLlmLabel}
+        connected={connected}
+        onLogout={onLogout}
       />
 
-      {/* Main Layout Container */}
-      <div style={styles.layoutContainer}>
-        {/* Left Sidebar */}
-        {!leftSidebarCollapsed && (
-          <LeftSidebar
-            styles={styles}
-            collapsed={leftSidebarCollapsed}
-            onToggle={handleToggleLeftSidebar}
-            isMobile={isMobile}
-            {...leftSidebarProps}
-          />
-        )}
-
-        {/* Main Content */}
-        <MainContent
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        <LeftSidebar
           styles={styles}
-          leftSidebarCollapsed={leftSidebarCollapsed}
-          rightSidebarCollapsed={rightSidebarCollapsed}
+          collapsed={leftSidebarCollapsed}
+          onToggle={() => setLeftSidebarCollapsed(v => !v)}
           isMobile={isMobile}
-          {...mainContentProps}
+          conversations={conversations}
+          currentConversation={currentConversation}
+          onSelectConversation={onSelectConversation}
+          onCreateConversation={onCreateConversation}
+          centerView={centerView}
+          onNavigate={onNavigate}
         />
 
-        {/* Right Sidebar */}
-        {!rightSidebarCollapsed && (
-          <RightSidebar
-            styles={styles}
-            collapsed={rightSidebarCollapsed}
-            onToggle={handleToggleRightSidebar}
-            isMobile={isMobile}
-            {...rightSidebarProps}
-          />
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {children}
+        </div>
+
+        {!hideRightPanel && (
+          <RightSidebar styles={styles} collapsed={rightSidebarCollapsed} onToggle={() => setRightSidebarCollapsed(v => !v)} />
         )}
       </div>
-
-      {/* Mobile Overlay */}
-      {isMobile && (!leftSidebarCollapsed || !rightSidebarCollapsed) && (
-        <div
-          style={styles.mobileOverlay}
-          onClick={() => {
-            if (!leftSidebarCollapsed) setLeftSidebarCollapsed(true);
-            if (!rightSidebarCollapsed) setRightSidebarCollapsed(true);
-          }}
-        />
-      )}
     </div>
   );
 };

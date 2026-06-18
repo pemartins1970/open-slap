@@ -1,3 +1,10 @@
+"""
+Integração opcional com gateway de IA externo.
+Não está integrada ao core do Open Slap! (llm_manager, main_auth, rotas).
+Mantida como referência para implementações futuras que precisarem
+rotear chamadas LLM através de um gateway intermediário (ex.: portão de
+segurança, caching, rate limiting centralizado).
+"""
 import aiohttp
 import logging
 from typing import Dict, Any, List, Optional, AsyncGenerator

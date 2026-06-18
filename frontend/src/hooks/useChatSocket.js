@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import useChunkBuffer from './useChunkBuffer';
 import { applyHistoryEvent, applySoftwareOperatorEvent, applyWsCloseEvent, applyWsErrorEvent, reduceDoneEvent, reduceStatusEvent } from '../lib/chatSocketReducers';
 
@@ -42,6 +43,10 @@ const useChatSocket = ({
   maybeRepoDisambiguationInternalPrompt,
   fetchRuntimeLlmLabel,
   streaming,
+  onRequestDone,
+  onConversationRenamed,
+  selectedProvider,
+  selectedModel,
 }) => {
   const streamingRef = useRef(false);
   const { appendChunk, flush, hasBuffered } = useChunkBuffer({ setMessages });
@@ -61,10 +66,11 @@ const useChatSocket = ({
     ws.onopen = () => {
       if (wsRef.current !== ws) return;
       setConnected(true);
-      console.log('WebSocket conectado');
+      console.log('[WS] Conectado, pending=%s', Boolean(pendingAutoSendRef.current));
       fetchRuntimeLlmLabel();
 
       if (pendingAutoSendRef.current) {
+        console.log('[WS] Processando pendingAutoSendRef');
         const pending = pendingAutoSendRef.current;
         pendingAutoSendRef.current = null;
 
@@ -156,9 +162,11 @@ const useChatSocket = ({
         done: (d) => {
           flush();
           let meta = null;
-          setMessages((prev) => {
-            meta = reduceDoneEvent(prev, d, parseAssistantDirectivesFromText);
-            return meta.nextMessages;
+          flushSync(() => {
+            setMessages((prev) => {
+              meta = reduceDoneEvent(prev, d, parseAssistantDirectivesFromText);
+              return meta.nextMessages;
+            });
           });
           const selectionReason = meta?.selectionReason || '';
           const matchedKeywords = meta?.matchedKeywords || [];
@@ -201,6 +209,7 @@ const useChatSocket = ({
             const label = formatRuntimeLlmLabel(d.provider, d.model, llmMode);
             if (label) setRuntimeLlmLabel(label);
           }
+          onRequestDone?.();
           setStreaming(false);
           setStreamStatusText('');
           scheduleListsRefresh();
@@ -222,6 +231,41 @@ const useChatSocket = ({
             messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
           }, 0);
         },
+        conversation_renamed: (d) => {
+          const cid = d?.conversation_id;
+          const title = String(d?.title || '').trim();
+          if (cid != null && title) {
+            onConversationRenamed?.(String(cid), title);
+          }
+        },
+        cancel_ack: (d) => {
+          console.log('Cancelamento solicitado:', d.run_id);
+          flush();
+          setStreaming(false);
+          setStreamStatusText('');
+        },
+        cancelled: (d) => {
+          console.log('Orquestração cancelada:', d.conversation_id);
+          flush();
+          setStreaming(false);
+          setStreamStatusText('');
+          const nowMs = Date.now();
+          const msgId = `cancelled-${nowMs}-${Math.random().toString(16).slice(2)}`;
+          setMessages((prev) => {
+            const next = Array.isArray(prev) ? [...prev] : [];
+            const last = next[next.length - 1];
+            if (last && last.role === 'assistant' && last.streaming) {
+              next[next.length - 1] = { ...last, content: '*[Orquestração cancelada pelo usuário]*', streaming: false };
+              return next;
+            }
+            return [...next, {
+              role: 'assistant',
+              content: '*[Orquestração cancelada pelo usuário]*',
+              streaming: false,
+              id: msgId,
+            }];
+          });
+        },
         error: (d) => {
           const txt = String(d.content || '').trim() || 'Erro no processamento.';
           console.error('WebSocket error:', txt);
@@ -241,19 +285,19 @@ const useChatSocket = ({
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       if (wsRef.current !== ws) return;
       const wasStreaming = Boolean(streamingRef.current) || hasBuffered();
       setConnected(false);
       setStreaming(false);
       setStreamStatusText('');
       flush();
+      console.log('[WS] Desconectado code=%s reason="%s" wasStreaming=%s', ev?.code, ev?.reason, wasStreaming);
       if (wasStreaming) {
-        const txt = 'Conexão perdida durante o processamento. Reabrindo…';
+        const txt = 'Conexão perdida durante o processamento. Reabrindo\u2026';
         const nowMs = Date.now();
         setMessages((prev) => applyWsCloseEvent(prev, txt, { nowMs }));
       }
-      console.log('WebSocket desconectado');
 
       setTimeout(() => {
         if (user) {
@@ -309,15 +353,40 @@ const useChatSocket = ({
     loadTasks,
     messagesEndRef,
     user,
+    onRequestDone,
   ]);
 
-  const sendMessage = useCallback(() => {
-    if (!input?.trim() || streaming || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      return;
+  // Auto-connect quando user e token ficam dispon\u00edveis.
+  // connectWebSocket omitido das deps intencionalmente: a fun\u00e7\u00e3o recria o WS
+  // completamente; re-executar em cada mudan\u00e7a de callback (lang, skills, etc.)
+  // causaria reconex\u00f5es desnecess\u00e1rias. S\u00f3 reconecta em mudan\u00e7a de identidade
+  // do usu\u00e1rio ou rota\u00e7\u00e3o de token.
+  const userId = user?.id ?? user?.sub ?? user?.email ?? null;
+  useEffect(() => {
+    if (!userId || !token) return;
+    connectWebSocket();
+    return () => {
+      if (wsRef.current) {
+        const ws = wsRef.current;
+        ws.onclose = null; // evita loop de reconex\u00e3o no unmount
+        ws.close();
+        wsRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, token]);
+
+  const sendMessage = useCallback((overrideText) => {
+    const text = (overrideText || input)?.trim();
+    console.log('[sendMessage] called, text="%s", streaming=%s, readyState=%s, hasWs=%s', text, streaming, wsRef.current?.readyState, Boolean(wsRef.current));
+    if (!text || streaming || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.log('[sendMessage] EARLY RETURN');
+      return false;
     }
+    console.log('[sendMessage] PROCEEDING TO SEND');
 
     const now = Date.now();
-    const contentRaw = input.trim();
+    const contentRaw = text;
     const extraPrompt = maybeRepoDisambiguationInternalPrompt({ lang, text: contentRaw });
     const userMessage = {
       role: 'user',
@@ -350,7 +419,10 @@ const useChatSocket = ({
       skill_web_search: activeSkill?.content?.web_search === true,
       force_expert_id: forceExpertId || null,
       debug_router: Boolean(showRoutingDebug),
+      provider: selectedProvider || undefined,
+      model: selectedModel || undefined,
     }));
+    return true;
   }, [
     input,
     streaming,
@@ -366,6 +438,8 @@ const useChatSocket = ({
     agentConfigs,
     buildSysGlobalKernelPrompt,
     showRoutingDebug,
+    selectedProvider,
+    selectedModel,
   ]);
 
   return { connectWebSocket, sendMessage };
