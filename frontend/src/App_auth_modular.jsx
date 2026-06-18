@@ -204,6 +204,12 @@ const AppContent = () => {
   }, [location.pathname]);
 
   useEffect(() => {
+    if (settingsOpen && typeof loadProviderStatus === 'function') {
+      loadProviderStatus();
+    }
+  }, [settingsOpen]);
+
+  useEffect(() => {
     const pathParts = location.pathname.split('/');
     if (pathParts[1] === 'chat' && pathParts[2]) {
       setCurrentConversation(pathParts[2]);
