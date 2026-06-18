@@ -689,7 +689,7 @@ const AppContent = () => {
 
       {settingsOpen && (
         <div style={styles.modalOverlay} onClick={() => setSettingsOpen(false)}>
-          <div style={{ ...styles.modal, width: '640px', maxHeight: '80vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+          <div style={{ ...styles.modal, width: 'min(900px, 90vw)', maxHeight: '80vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <div style={{ fontSize: '18px', fontWeight: 600 }}>{t('settings')}</div>
               <button style={styles.modalClose} onClick={() => setSettingsOpen(false)}>✕</button>

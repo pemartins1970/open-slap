@@ -704,7 +704,7 @@ export function buildAppAuthStyles({ connected } = {}) {
     },
     modal: {
       width: '100%',
-      maxWidth: '640px',
+      maxWidth: 'min(900px, 90vw)',
       borderRadius: '10px',
       border: '1px solid var(--border)',
       background: 'var(--bg2)',
