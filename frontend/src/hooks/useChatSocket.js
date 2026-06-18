@@ -380,10 +380,8 @@ const useChatSocket = ({
     const text = (overrideText || input)?.trim();
     console.log('[sendMessage] called, text="%s", streaming=%s, readyState=%s, hasWs=%s', text, streaming, wsRef.current?.readyState, Boolean(wsRef.current));
     if (!text || streaming || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      console.log('[sendMessage] EARLY RETURN');
       return false;
     }
-    console.log('[sendMessage] PROCEEDING TO SEND');
 
     const now = Date.now();
     const contentRaw = text;

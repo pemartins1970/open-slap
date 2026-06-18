@@ -218,7 +218,6 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
         if (result.response) {
           try {
             data = await result.response.json();
-            console.log('Password Reset API Response:', data);
           } catch (parseError) {
             console.error('Failed to parse response:', parseError);
           }
@@ -251,7 +250,6 @@ const Login = ({ onLogin, onRegister, onPasswordResetRequest, onPasswordResetCon
         if (result.response) {
           try {
             data = await result.response.json();
-            console.log('Password Reset Confirm API Response:', data);
           } catch (parseError) {
             console.error('Failed to parse response:', parseError);
           }
