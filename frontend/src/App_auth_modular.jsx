@@ -47,7 +47,12 @@ const AppContent = () => {
   const { user, loading, login, register, logout, getAuthHeaders, isAuthenticated, token, requestPasswordReset, confirmPasswordReset } = useAuthContext();
 
   const { conversations, currentConversation, setCurrentConversation, createConversation, deleteConversation, loadConversations, conversationsLoading } = useConversations(getAuthHeaders);
-  const { doctorReport, isChecking, runCheck, loadSystemMap } = useDoctor(getAuthHeaders);
+  const {
+    doctorReport, doctorError, doctorLoading,
+    systemMapText, systemMapUpdatedAt, systemMapError, systemMapLoading,
+    refreshSystemProfile, fetchDoctorReport, getDoctorLabel,
+    fetchSystemMap, runCheck
+  } = useDoctor(getAuthHeaders);
   const { skills, experts, toggleSkill, updateSkill, getSkillsBySegment, skillsLoading } = useSkills(getAuthHeaders, t);
   const settingsHook = useSettings(getAuthHeaders, t);
   const {
@@ -125,6 +130,10 @@ const AppContent = () => {
   const [agentConfigs, setAgentConfigs] = useState({});
   const [showRoutingDebug, setShowRoutingDebug] = useState(false);
   const [chatFontScale, setChatFontScale] = useState(1);
+  const [planAutoApproveAll, setPlanAutoApproveAll] = useState(() => {
+    const stored = localStorage.getItem('planAutoApproveAll');
+    return stored !== null ? stored === 'true' : false;
+  });
   const [chatSearchQuery, setChatSearchQuery] = useState('');
   const [isMobile, setIsMobile] = useState(false);
   const [currentKind, setCurrentKind] = useState('conversation');
@@ -686,7 +695,28 @@ const AppContent = () => {
               ))}
             </div>
             <div style={{ padding: '0 16px 16px' }}>
-              {settingsTab === 'system' && <SystemSettingsPanel styles={styles} settingsLoading={settingsLoadingLLM} />}
+              {settingsTab === 'system' && <SystemSettingsPanel
+                styles={styles}
+                t={t}
+                settingsLoading={settingsLoading}
+                doctorError={doctorError}
+                doctorReport={doctorReport}
+                doctorLoading={doctorLoading}
+                refreshSystemProfile={refreshSystemProfile}
+                fetchDoctorReport={fetchDoctorReport}
+                getDoctorLabel={getDoctorLabel}
+                setSettingsTab={setSettingsTab}
+                systemMapLoading={systemMapLoading}
+                systemMapError={systemMapError}
+                systemMapUpdatedAt={systemMapUpdatedAt}
+                systemMapText={systemMapText}
+                fetchSystemMap={fetchSystemMap}
+                planAutoApproveAll={planAutoApproveAll}
+                onPlanAutoApproveAllChange={(v) => {
+                  setPlanAutoApproveAll(v);
+                  localStorage.setItem('planAutoApproveAll', String(v));
+                }}
+              />}
               {settingsTab === 'llm' && <LlmSettingsPanel
                 styles={styles}
                 settingsLoading={settingsLoadingLLM}

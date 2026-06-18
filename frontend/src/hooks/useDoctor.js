@@ -3,6 +3,7 @@
  */
 
 import { useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 
 /**
  * Hook para gerenciar Doctor health checks
@@ -10,6 +11,8 @@ import { useState, useCallback } from 'react';
  * @returns {Object} - Estado e funções de Doctor
  */
 export const useDoctor = (getAuthHeaders) => {
+  const { t } = useTranslation();
+
   // Estados principais
   const [doctorReport, setDoctorReport] = useState(null);
   const [doctorLoading, setDoctorLoading] = useState(false);
@@ -274,6 +277,90 @@ export const useDoctor = (getAuthHeaders) => {
     setSystemMapError('');
   }, []);
 
+  const getDoctorLabel = useCallback((check) => {
+    const id = String(check?.id || '').trim();
+    if (!id) return check?.label || '';
+    const k = `doctor_check_${id}`;
+    const v = t(k);
+    return v === k ? (check?.label || id) : v;
+  }, [t]);
+
+  const refreshSystemProfile = useCallback(async () => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return;
+    setDoctorLoading(true);
+    try {
+      const res = await fetch('/api/system_profile/refresh', { method: 'POST', headers });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.detail || 'Error updating profile.');
+      }
+      return json;
+    } catch (e) {
+      setDoctorError('Could not update system profile.');
+      return null;
+    } finally {
+      setDoctorLoading(false);
+    }
+  }, [getAuthHeaders]);
+
+  const fetchDoctorReport = useCallback(async ({ silent = false } = {}) => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return null;
+    if (!silent) {
+      setDoctorLoading(true);
+      setDoctorError('');
+    }
+    try {
+      const res = await fetch('/api/doctor', { headers });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.detail || 'Error running diagnostics.');
+      }
+      setDoctorReport(json || null);
+      return json;
+    } catch (e) {
+      setDoctorError('Could not run diagnostics.');
+      setDoctorReport(null);
+      return null;
+    } finally {
+      if (!silent) {
+        setDoctorLoading(false);
+      }
+    }
+  }, [getAuthHeaders]);
+
+  const fetchSystemMap = useCallback(async ({ silent = false, refresh = false } = {}) => {
+    if (!silent) {
+      setSystemMapLoading(true);
+      setSystemMapError('');
+    }
+    try {
+      const headers = getAuthHeaders();
+      if (!headers.Authorization) return null;
+      const res = await fetch(refresh ? '/api/system_map/refresh' : '/api/system_map', {
+        method: refresh ? 'POST' : 'GET',
+        headers
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.detail || 'Error loading system map.');
+      }
+      setSystemMapText(String(json?.ascii || json?.markdown || json?.text || ''));
+      setSystemMapUpdatedAt(String(json?.generated_at || json?.updated_at || ''));
+      return json;
+    } catch (e) {
+      setSystemMapError('Could not load system map.');
+      setSystemMapText('');
+      setSystemMapUpdatedAt('');
+      return null;
+    } finally {
+      if (!silent) {
+        setSystemMapLoading(false);
+      }
+    }
+  }, [getAuthHeaders]);
+
   return {
     // Doctor Report
     doctorReport,
@@ -301,6 +388,12 @@ export const useDoctor = (getAuthHeaders) => {
     loadSystemMap,
     refreshSystemMap,
     deleteSystemMap,
+
+    // Funções unificadas (compat monólito)
+    refreshSystemProfile,
+    fetchDoctorReport,
+    getDoctorLabel,
+    fetchSystemMap,
 
     // Utilitários
     clearDoctorError,
