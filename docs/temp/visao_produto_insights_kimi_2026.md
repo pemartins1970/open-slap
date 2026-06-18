@@ -46,7 +46,7 @@ A interface de chat atual precisa evoluir de uma simples troca de mensagens para
 
 ### 10.2 Painel Direito Redesenhado
 
-Substituir o painel direito atual por abas funcionais:
+Estudar a possibilidade de substituir o painel direito atual por um com abas funcionais:
 
 **A. Activity Feed (Monitoramento)**
 - Atividades recentes em ordem cronológica
@@ -68,11 +68,15 @@ Substituir o painel direito atual por abas funcionais:
 - Limites mensais e saldo de créditos
 - Status MCP e LSP (inspirado no modelo opencode)
 
+Outro ítem ainda não resolvido teria a ver com a lista de artefatos (com preview) e o status daquele projeto em particular. UI aqui pode ajudar a resolver isso de forma melhor. Precisamos avaliar como fazer isso.
+
+Todos relacionados a sessão em exibição. Um dos vários problemas disso é, por exemplo, que o MCP registrado como em execução em uma sessão anterior, provavelmente não estará mais rodando. Então, caso o usuário alterne entre conversas, ao invés de mcps em uso, teríamos mcps utilizados na sessão.
+
 ### 10.3 Roadmap de UX para o Novo `src` Limpo
 
 Quando o novo `src` limpo for estabelecido (após correções e consolidação do git), a sequência sugerida para implementar estas melhorias é:
 
-1. **Fase 1 — Fundação:** Mode Switch + botão de parada de emergência no header do chat
+1. **Fase 1 — Fundação:** Mode Switch + botão de parada de emergência no header do chat. Talvez próximo ao controle de tamanho das fontes na tela.
 2. **Fase 2 — Visibilidade:** Status do agente inline nas mensagens + breadcrumb no topo
 3. **Fase 3 — Painel Direito:** Substituir o painel atual pelo sistema de abas (Activity Feed primeiro, depois Memory/Knowledge, Tools, Settings)
 4. **Fase 4 — Indicadores:** Barra de recursos (tokens, MCP, LSP) no rodapé ou sidebar
@@ -101,9 +105,9 @@ Context          MCP                           LSP
 $0.00 spent
 ```
 
-Isso poderia ser adaptado para o Open Slap! como um rodapé ou seção no painel direito, mostrando:
-- Tokens consumidos na sessão vs. limite mensal
-- Status dos conectores ativos (MCP, GitHub, Telegram)
+Isso poderia ser adaptado para o Open Slap! como um rodapé ou seção no painel direito (prefiro assim), mostrando:
+- Tokens consumidos na sessão vs. saldo atual vs. limite mensal
+- Status dos conectores ativos e em uso (MCP, GitHub, Telegram)
 - Provider LLM ativo no momento
 
 ---
