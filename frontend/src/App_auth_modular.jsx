@@ -65,23 +65,6 @@ const AppContent = () => {
     reloadSettings, resetSettings
   } = settingsHook;
   const { soulData, updateSoulData, loadSoul } = useSoul(getAuthHeaders);
-  const secHook = useSecuritySettings({
-    getAuthHeaders, t, isAuthenticated,
-    setSettingsLoading,
-    setSettingsError,
-    settingsOpen, settingsTab
-  });
-  const {
-    securitySettings, securitySettingsUpdatedAt,
-    authSettings, authSettingsUpdatedAt,
-    jwtExpireMinutesDraft, setJwtExpireMinutesDraft,
-    authSettingsSaving,
-    autoApproveCommands, autoApproveCommandsLoading, autoApproveCommandsError,
-    genericModal, setGenericModal,
-    applySecuritySettingChange, applyJwtExpiryChange,
-    loadAutoApproveCommands, deleteAutoApproveCommand
-  } = secHook;
-
   const llmConfigHook = useLLMConfig(getAuthHeaders, t);
   const {
     llmMode, llmProvider, llmModel, llmBaseUrl, llmApiKey,
@@ -139,6 +122,23 @@ const AppContent = () => {
   const [currentKind, setCurrentKind] = useState('conversation');
   const [chatSearch, setChatSearch] = useState('');
   const [messageFeedback, setMessageFeedback] = useState({});
+
+  const secHook = useSecuritySettings({
+    getAuthHeaders, t, isAuthenticated,
+    setSettingsLoading,
+    setSettingsError,
+    settingsOpen, settingsTab
+  });
+  const {
+    securitySettings, securitySettingsUpdatedAt,
+    authSettings, authSettingsUpdatedAt,
+    jwtExpireMinutesDraft, setJwtExpireMinutesDraft,
+    authSettingsSaving,
+    autoApproveCommands, autoApproveCommandsLoading, autoApproveCommandsError,
+    genericModal, setGenericModal,
+    applySecuritySettingChange, applyJwtExpiryChange,
+    loadAutoApproveCommands, deleteAutoApproveCommand
+  } = secHook;
 
   const setActiveLlmProviderKey = useCallback(async (providerId, keyId) => {
     const headers = getAuthHeaders();
