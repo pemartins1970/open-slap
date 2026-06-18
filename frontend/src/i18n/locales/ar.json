@@ -1,5 +1,9 @@
 {
   "recent": "Recent",
+  "conv_search_placeholder": "…ابحث في المحادثات",
+  "chat_input_placeholder": "…اكتب رسالة",
+  "current_default_values": "الحالي={{current}} • الافتراضي={{default}}",
+  "llm_settings": "LLM والمزودون",
   "reasoning_label": "",
   "auto_mode": "",
   "plan_status_running": "",

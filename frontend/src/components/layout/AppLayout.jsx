@@ -17,6 +17,7 @@ const AppLayout = ({
   currentConversation,
   onSelectConversation,
   onCreateConversation,
+  onCreateNote,
   centerView,
   onNavigate
 }) => {
@@ -59,6 +60,7 @@ const AppLayout = ({
           currentConversation={currentConversation}
           onSelectConversation={onSelectConversation}
           onCreateConversation={onCreateConversation}
+          onCreateNote={onCreateNote}
           centerView={centerView}
           onNavigate={onNavigate}
         />

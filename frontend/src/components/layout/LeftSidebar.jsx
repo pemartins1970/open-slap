@@ -1,11 +1,8 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 
-const DEFAULT_NAV_ITEMS = [
-  { key: 'conversations', labelKey: 'conversations', icon: '→' },
-  { key: 'chat', labelKey: 'chat', icon: '💬' },
-  { key: 'skills', labelKey: 'skills', icon: '🧠' },
-  { key: 'doctor', labelKey: 'doctor', icon: '🔍' },
+const NAV_ITEMS = [
+  { key: 'conversations', labelKey: 'conversations', icon: '📋' },
 ];
 
 const LeftSidebar = ({
@@ -17,10 +14,10 @@ const LeftSidebar = ({
   currentConversation,
   onSelectConversation,
   onCreateConversation,
+  onCreateNote,
   centerView,
   onNavigate,
-  navItems = DEFAULT_NAV_ITEMS,
-  // monolith extensions
+  navItems = NAV_ITEMS,
   mobileOpen,
   onMobileClose,
   hoverKey,
@@ -28,9 +25,6 @@ const LeftSidebar = ({
   onHoverLeave,
   onSelectNote,
   onGoHome,
-  lang,
-  logoWidthCollapsed,
-  logoWidthExpanded,
 }) => {
   const { t } = useTranslation();
   const isCollapsed = collapsed;
@@ -77,7 +71,7 @@ const LeftSidebar = ({
             </button>
           </div>
 
-          {onCreateConversation && !isCollapsed && (
+          {!isCollapsed && (
             <>
               <div style={{ height: '8px' }} />
               <button
@@ -97,9 +91,46 @@ const LeftSidebar = ({
                   textAlign: 'center'
                 }}
               >
-                {t('new_conversation')}
+                + {t('new_conversation')}
               </button>
             </>
+          )}
+
+          {onCreateNote && !isCollapsed && (
+            <>
+              <div style={{ height: '4px' }} />
+              <button
+                type="button"
+                onClick={onCreateNote}
+                style={{
+                  ...styles.sidebarButton,
+                  width: '100%',
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '8px 12px',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  textAlign: 'center',
+                  background: 'transparent',
+                  color: 'var(--text)',
+                }}
+              >
+                📝 {t('nav_notes')}
+              </button>
+            </>
+          )}
+
+          {isCollapsed && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', marginTop: '8px' }}>
+              <button type="button" onClick={onCreateConversation} style={styles.sidebarButton} title={t('new_conversation')}>
+                +
+              </button>
+              {onCreateNote && (
+                <button type="button" onClick={onCreateNote} style={styles.sidebarButton} title={t('notes')}>
+                  📝
+                </button>
+              )}
+            </div>
           )}
 
           <div style={{ height: '12px' }} />

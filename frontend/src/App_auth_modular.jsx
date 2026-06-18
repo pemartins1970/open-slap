@@ -11,6 +11,7 @@ import { useSkills } from './hooks';
 import { useSettings } from './hooks';
 import { useSoul } from './hooks';
 import { useLLMConfig } from './hooks';
+import { useSecuritySettings } from './hooks/useSecuritySettings';
 import { buildSysGlobalKernelPrompt } from './lib/kernelPrompt';
 import { maybeRepoDisambiguationInternalPrompt } from './lib/repoDisambiguation';
 import { buildAppAuthStyles } from './styles/appAuthStyles';
@@ -34,16 +35,8 @@ import {
   extractTaggedJsonBlocks,
   parseCommandRequestsFromContent,
   getBuiltinMeta,
-  getBootGreeting,
 } from './lib/utils';
 
-const OPEN_SLAP_ASCII_FONT =
-  '"Cascadia Mono", Consolas, "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, "Liberation Mono", "Courier New", monospace';
-const OPEN_SLAP_VERSION = 'v2.1';
-const OPEN_SLAP_ASCII = `open_slap > boot
----------------------------------------------------------
-    (ASCII art mantido do original)
---------------------------------------------------------`;
 
 const AppContent = () => {
   const navigate = useNavigate();
@@ -62,10 +55,28 @@ const AppContent = () => {
     providerStatusList, providerStatusLoading, providerStatusError,
     activeProvider, activeProviderLoading, fetchActiveProvider,
     setLang: setSettingsLang, setTheme, setSettingsTab: setSettingsTabHook,
+    setSettingsLoading, setSettingsError,
     saveLanguageSettings, saveThemeSettings, loadProviderStatus,
     reloadSettings, resetSettings
   } = settingsHook;
   const { soulData, updateSoulData, loadSoul } = useSoul(getAuthHeaders);
+  const secHook = useSecuritySettings({
+    getAuthHeaders, t, isAuthenticated,
+    setSettingsLoading,
+    setSettingsError,
+    settingsOpen, settingsTab
+  });
+  const {
+    securitySettings, securitySettingsUpdatedAt,
+    authSettings, authSettingsUpdatedAt,
+    jwtExpireMinutesDraft, setJwtExpireMinutesDraft,
+    authSettingsSaving,
+    autoApproveCommands, autoApproveCommandsLoading, autoApproveCommandsError,
+    genericModal, setGenericModal,
+    applySecuritySettingChange, applyJwtExpiryChange,
+    loadAutoApproveCommands, deleteAutoApproveCommand
+  } = secHook;
+
   const llmConfigHook = useLLMConfig(getAuthHeaders, t);
   const {
     llmMode, llmProvider, llmModel, llmBaseUrl, llmApiKey,
@@ -92,6 +103,7 @@ const AppContent = () => {
 
   const [centerView, setCenterView] = useState('chat');
   const [settingsTab, setSettingsTab] = useState('general');
+  const [convSearchQuery, setConvSearchQuery] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showExecutionPanel, setShowExecutionPanel] = useState(false);
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
@@ -171,6 +183,7 @@ const AppContent = () => {
     if (!isAuthenticated) return;
     loadConversations();
     if (typeof loadSoul === 'function') loadSoul();
+    if (typeof fetchActiveProvider === 'function') fetchActiveProvider();
   }, [isAuthenticated]);
 
   useEffect(() => {
@@ -307,23 +320,84 @@ const AppContent = () => {
     navigate(`/${view}`);
   };
 
+  const getGreeting = () => {
+    const h = new Date().getHours();
+    if (h >= 5 && h < 12) return t('boot_greeting_morning');
+    if (h >= 12 && h < 18) return t('boot_greeting_afternoon');
+    return t('boot_greeting_evening');
+  };
+
+  const username = user?.email?.split('@')[0] || user?.name || 'maker';
+  const fileInputRef = useRef(null);
+
   const renderBootScreen = () => {
-    console.log('[Boot] renderBootScreen called, centerView=%s messages.length=%s bootInput="%s"', centerView, messages.length, bootInput);
-    const greeting = getBootGreeting(t, soulData, user);
-    const asciiWithVersion = OPEN_SLAP_ASCII.replace('open_slap > boot', `open_slap > boot #${OPEN_SLAP_VERSION}#`);
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'auto' }}>
-        <div style={{ maxWidth: '920px', width: '100%', padding: '20px' }}>
-          <div style={{ ...styles.lightCard, border: '1px solid rgba(255,255,255,0.10)' }}>
-            <pre style={{ fontFamily: OPEN_SLAP_ASCII_FONT, fontSize: isMobile ? '10px' : '12px', lineHeight: 1.2, color: 'var(--text-dim)', textAlign: 'center' }}>
-              {asciiWithVersion}
-            </pre>
+        <div style={{ maxWidth: '680px', width: '100%', padding: '20px' }}>
+          <div style={{ fontSize: '28px', fontWeight: 500, textAlign: 'center', marginBottom: '8px', color: 'var(--text)' }}>
+            {getGreeting()}
           </div>
-          <div style={{ marginTop: '20px', color: 'var(--text)', fontSize: '16px', textAlign: 'center' }}>{greeting}</div>
-          <form onSubmit={e => { e.preventDefault(); const v = bootInput.trim(); if (!v) return; console.log('[Boot] Submit, sending:', v); setBootInput(''); setInput(v); setCenterView('chat'); navigate('/chat'); const sent = sendMessage(v); console.log('[Boot] sendMessage result:', sent); if (!sent) { pendingAutoSendRef.current = v; console.log('[Boot] fallback to pendingAutoSendRef'); } }} style={{ marginTop: '30px', display: 'flex', justifyContent: 'center' }}>
-            <input value={bootInput} onChange={e => setBootInput(e.target.value)}
-              placeholder={t('boot_input_placeholder')} style={{ maxWidth: '500px', width: '100%', textAlign: 'center', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '8px', padding: '10px 14px', fontSize: '14px', color: 'var(--text)', fontFamily: 'var(--sans)', outline: 'none' }} autoFocus />
-          </form>
+          <div style={{ fontSize: '22px', fontWeight: 300, textAlign: 'center', marginBottom: '40px', color: 'var(--text-dim)' }}>
+            {username}.
+          </div>
+          <div style={{ border: '1px solid var(--border)', borderRadius: '12px', background: 'var(--bg2)', overflow: 'hidden' }}>
+            <textarea
+              value={bootInput}
+              onChange={e => setBootInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  const v = bootInput.trim();
+                  if (!v) return;
+                  setBootInput('');
+                  setInput(v);
+                  setCenterView('chat');
+                  navigate('/chat');
+                  const sent = sendMessage(v);
+                  if (!sent) { pendingAutoSendRef.current = v; }
+                }
+              }}
+              placeholder={t('boot_input_placeholder')}
+              style={{
+                width: '100%', background: 'transparent', border: 'none',
+                padding: '16px', fontSize: '14px', color: 'var(--text-bright)',
+                fontFamily: 'var(--sans)', outline: 'none', resize: 'none',
+                minHeight: '80px', maxHeight: '200px', lineHeight: '1.5',
+              }}
+              autoFocus
+            />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px 10px', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: '6px', padding: '6px 10px', cursor: 'pointer', fontSize: '12px', color: 'var(--text-dim)' }}
+                >
+                  📎 {t('attach') || 'Anexar'}
+                </button>
+                <input type="file" multiple ref={fileInputRef} style={{ display: 'none' }} />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const v = bootInput.trim();
+                    if (!v) return;
+                    setBootInput('');
+                    setInput(v);
+                    setCenterView('chat');
+                    navigate('/chat');
+                    const sent = sendMessage(v);
+                    if (!sent) { pendingAutoSendRef.current = v; }
+                  }}
+                  disabled={!bootInput.trim()}
+                  style={{ background: 'var(--amber)', border: 'none', borderRadius: '8px', padding: '8px 16px', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: 'var(--bg)' }}
+                >
+                  🚀 {t('send')}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -430,7 +504,7 @@ const AppContent = () => {
         <div style={styles.inputArea}>
           <textarea value={input} onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
-            placeholder={t('boot_input_placeholder')} style={styles.input} rows={2} />
+            placeholder={t('chat_input_placeholder')} style={styles.input} rows={2} />
           <button onClick={handleSendMessage} disabled={!input.trim() || streaming}
             style={{ ...styles.settingsPrimaryButton, padding: '8px 16px' }}>{t('send')}</button>
         </div>
@@ -463,6 +537,10 @@ const AppContent = () => {
     navigate(`/chat/${convId}`);
   };
 
+  const handleCreateNote = () => {
+    setCenterView('notes');
+  };
+
   return (
     <>
       {commandModal && (
@@ -489,6 +567,33 @@ const AppContent = () => {
 
       <OnboardingModal />
 
+      {genericModal ? (
+        <div style={styles.modalOverlay} onClick={() => setGenericModal(null)}>
+          <div style={{ ...styles.modal, maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <div style={styles.modalTitle}>{genericModal?.title || t('confirm')}</div>
+              <button style={styles.iconButton} onClick={() => setGenericModal(null)} title={t('close')}>×</button>
+            </div>
+            <div style={styles.modalBody}>{genericModal?.body || ''}</div>
+            <div style={{ ...styles.commandActions, justifyContent: 'flex-end' }}>
+              <button style={styles.settingsSecondaryButton} onClick={() => setGenericModal(null)}>
+                {t('cancel')}
+              </button>
+              <button
+                style={styles.settingsPrimaryButton}
+                onClick={() => {
+                  const action = genericModal?.onConfirm;
+                  setGenericModal(null);
+                  if (typeof action === 'function') action();
+                }}
+              >
+                {t('confirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <AppLayout
         styles={styles}
         user={user}
@@ -502,6 +607,7 @@ const AppContent = () => {
         currentConversation={currentConversation}
         onSelectConversation={handleSelectConversation}
         onCreateConversation={handleCreateConversation}
+        onCreateNote={handleCreateNote}
         centerView={centerView}
         onNavigate={handleNavigate}
       >
@@ -510,13 +616,21 @@ const AppContent = () => {
         : centerView === 'conversations' ? (
           <div style={{ ...styles.centerPanel, display: 'flex', flexDirection: 'column', height: '100%' }}>
             <div style={styles.centerPanelTitle}>{t('conversations')}</div>
+            <div style={{ padding: '8px 0' }}>
+              <input
+                value={convSearchQuery}
+                onChange={e => setConvSearchQuery(e.target.value)}
+                placeholder={t('conv_search_placeholder')}
+                style={{ width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: 'var(--text-bright)', fontFamily: 'var(--mono)', outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
               {conversations.length === 0 ? (
                 <div style={{ fontSize: '13px', color: 'var(--text-dim)', textAlign: 'center', padding: '40px 0' }}>
                   {t('no_conversations')}
                 </div>
               ) : (
-                conversations.map((conv) => (
+                conversations.filter(conv => !convSearchQuery || (conv.title || '').toLowerCase().includes(convSearchQuery.toLowerCase())).map((conv) => (
                   <button
                     key={conv.id}
                     type="button"
@@ -546,6 +660,12 @@ const AppContent = () => {
         ) : centerView === 'skills' ? (
           <SkillsPanel styles={styles} skills={skills} loading={skillsLoading} onRefresh={() => {}}
             onToggleSkill={toggleSkill} onUpdateSkill={updateSkill} />
+        ) : centerView === 'notes' ? (
+          <div style={{ ...styles.centerPanel, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+            <div style={{ fontSize: '13px', color: 'var(--text-dim)' }}>
+              {t('note_select_hint')}
+            </div>
+          </div>
         ) : centerView === 'doctor' ? (
           <DoctorPanel styles={styles} doctorReport={doctorReport} loading={isChecking}
             onRefresh={runCheck} onRunCheck={runCheck} onLoadSystemMap={loadSystemMap} />
@@ -560,9 +680,9 @@ const AppContent = () => {
               <button style={styles.modalClose} onClick={() => setSettingsOpen(false)}>✕</button>
             </div>
             <div style={{ marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', padding: '0 16px' }}>
-              {[['general', t('general')], ['system', t('system')], ['llm', t('llm')], ['security', t('security')]].map(([key, label]) => (
+              {['general', 'system', 'llm', 'security'].map(key => (
                 <button key={key} onClick={() => setSettingsTab(key)}
-                  style={{ ...styles.settingsTab, background: settingsTab === key ? 'var(--accent-bg)' : 'transparent' }}>{label}</button>
+                  style={{ ...styles.settingsTab, background: settingsTab === key ? 'var(--accent-bg)' : 'transparent' }}>{key === 'llm' ? (t('llm_settings') || 'LLM & Providers') : t(key)}</button>
               ))}
             </div>
             <div style={{ padding: '0 16px 16px' }}>
@@ -597,7 +717,26 @@ const AppContent = () => {
                 fetchActiveProvider={fetchActiveProvider}
                 runtimeLlmLabel={runtimeLlmLabel}
               />}
-              {settingsTab === 'security' && <SecuritySettingsPanel styles={styles} />}
+              {settingsTab === 'security' && <SecuritySettingsPanel
+                styles={styles}
+                t={t}
+                settingsLoading={settingsLoading}
+                securitySettings={securitySettings}
+                securitySettingsUpdatedAt={securitySettingsUpdatedAt}
+                applySecuritySettingChange={applySecuritySettingChange}
+                setGenericModal={setGenericModal}
+                authSettings={authSettings}
+                authSettingsUpdatedAt={authSettingsUpdatedAt}
+                jwtExpireMinutesDraft={jwtExpireMinutesDraft}
+                setJwtExpireMinutesDraft={setJwtExpireMinutesDraft}
+                authSettingsSaving={authSettingsSaving}
+                applyJwtExpiryChange={applyJwtExpiryChange}
+                autoApproveCommands={autoApproveCommands}
+                autoApproveCommandsLoading={autoApproveCommandsLoading}
+                autoApproveCommandsError={autoApproveCommandsError}
+                loadAutoApproveCommands={loadAutoApproveCommands}
+                deleteAutoApproveCommand={deleteAutoApproveCommand}
+              />}
               {settingsTab === 'general' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '400px' }}>
                   <div>

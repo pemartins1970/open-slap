@@ -275,6 +275,7 @@ export const useSettings = (getAuthHeaders, t) => {
     setLang,
     setTheme,
     setSettingsTab,
+    setSettingsLoading,
     setSettingsError,
 
     // Funções de configuração
