@@ -46,7 +46,7 @@ const AppContent = () => {
 
   const { user, loading, login, register, logout, getAuthHeaders, isAuthenticated, token, requestPasswordReset, confirmPasswordReset } = useAuthContext();
 
-  const { conversations, currentConversation, setCurrentConversation, createConversation, deleteConversation, loadConversations, conversationsLoading } = useConversations(getAuthHeaders);
+  const { conversations, currentConversation, setCurrentConversation, createConversation, deleteConversation, loadConversations, loadConversation, conversationsLoading } = useConversations(getAuthHeaders);
   const {
     doctorReport, doctorError, doctorLoading,
     systemMapText, systemMapUpdatedAt, systemMapError, systemMapLoading,
@@ -212,7 +212,11 @@ const AppContent = () => {
   useEffect(() => {
     const pathParts = location.pathname.split('/');
     if (pathParts[1] === 'chat' && pathParts[2]) {
-      setCurrentConversation(pathParts[2]);
+      if (typeof loadConversation === 'function') {
+        loadConversation(pathParts[2]);
+      } else {
+        setCurrentConversation(pathParts[2]);
+      }
     }
   }, [location.pathname]);
 
@@ -547,9 +551,13 @@ const AppContent = () => {
   };
 
   const handleSelectConversation = (convId) => {
-    setCurrentConversation(convId);
     setCenterView('chat');
     navigate(`/chat/${convId}`);
+    if (typeof loadConversation === 'function') {
+      loadConversation(convId);
+    } else {
+      setCurrentConversation(convId);
+    }
   };
 
   const handleCreateNote = () => {
