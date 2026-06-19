@@ -4,7 +4,7 @@
 
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
-const { spawn, exec } = require('child_process');
+const { spawn, exec, execSync } = require('child_process');
 const http = require('http');
 const fs = require('fs');
 
@@ -23,6 +23,7 @@ const pythonScriptPath = path.join(backendPath, 'main_auth.py');
 
 let mainWindow, splashWindow, backendProcess;
 let startupLog = [];
+let currentPythonCmd = null;
 
 function log(msg) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
@@ -232,6 +233,118 @@ function killBackend() {
   }
 }
 
+// --- Rollback SPEC-RESET-001 Nível 2 ---
+function getProjectRoot() {
+  return path.join(backendPath, '..');
+}
+
+function takeRollbackSnapshot(target) {
+  const projectRoot = getProjectRoot();
+  const backupRoot = path.join(projectRoot, 'data', 'backups');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const safeTarget = (target || 'rollback').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const backupDir = path.join(backupRoot, `${safeTarget}_${timestamp}`);
+
+  fs.mkdirSync(backupDir, { recursive: true });
+
+  const dbFiles = ['auth.db', 'slap.db', 'memory.db', 'conversations.db'];
+  const dataDir = path.join(projectRoot, 'data');
+  for (const db of dbFiles) {
+    const src = path.join(dataDir, db);
+    if (fs.existsSync(src)) fs.copyFileSync(src, path.join(backupDir, db));
+  }
+
+  try {
+    const head = execSync('git rev-parse HEAD', { cwd: projectRoot }).toString().trim();
+    fs.writeFileSync(path.join(backupDir, 'HEAD.txt'), head, 'utf8');
+  } catch (_) { /* non-fatal */ }
+
+  try {
+    const diff = execSync('git diff --name-only', { cwd: projectRoot }).toString().trim();
+    if (diff) fs.writeFileSync(path.join(backupDir, 'UNSTAGED_CHANGES.txt'), diff, 'utf8');
+  } catch (_) { /* non-fatal */ }
+
+  log(`📦 Snapshot salvo em: ${backupDir}`);
+  return backupDir;
+}
+
+async function execGitAsync(args) {
+  return new Promise((resolve, reject) => {
+    exec(`git ${args}`, { cwd: getProjectRoot(), maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(stderr || err.message));
+      resolve(stdout.trim());
+    });
+  });
+}
+
+async function hasSchemaMigration(target) {
+  try {
+    const out = await execGitAsync(`diff --name-only HEAD "${target}" -- backend/migrations/`);
+    return out.length > 0;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function hasRequirementsChanged(target) {
+  try {
+    const out = await execGitAsync(`diff --name-only HEAD "${target}" -- backend/requirements.txt`);
+    return out.length > 0;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function performRollback(target) {
+  const pythonCmd = currentPythonCmd || await findPython();
+  if (!pythonCmd) throw new Error('Python não encontrado no PATH.');
+  if (!target) throw new Error('Alvo do rollback não especificado (forneça um commit SHA, tag ou ref).');
+
+  log(`🔄 Rollback iniciado para: ${target}`);
+  const backupDir = takeRollbackSnapshot(target);
+
+  // Stash mudanças locais não commitadas
+  log('📦 Stashing mudanças locais...');
+  await execGitAsync('stash --include-untracked');
+
+  // Verificar migração de schema — hard abort
+  log('🔍 Verificando migrações de schema...');
+  if (await hasSchemaMigration(target)) {
+    log('❌ Migração de schema detectada — abortando rollback');
+    await execGitAsync('stash pop').catch(() => {});
+    throw new Error(
+      `Rollback ABORTADO: migração de schema detectada entre HEAD e ${target}.\n` +
+      `Backup salvo em: ${backupDir}\n` +
+      `Rollback de código com mudança de schema não é seguro.`
+    );
+  }
+
+  // Checkout do alvo
+  log(`📥 Checkout ${target}...`);
+  await execGitAsync(`checkout ${target}`);
+  log(`📥 Checkout concluído: ${await execGitAsync('rev-parse HEAD')}`);
+
+  // Reinstalar dependências se requirements.txt mudou
+  if (await hasRequirementsChanged(target)) {
+    log('📦 requirements.txt mudou — reinstalando dependências...');
+    await installPythonDependencies(pythonCmd);
+  } else {
+    log('✓ requirements.txt inalterado — pulando pip install');
+  }
+
+  // Kill + restart backend
+  log('🛑 Parando backend...');
+  killBackend();
+  await new Promise((r) => setTimeout(r, 2000));
+
+  log('🚀 Reiniciando backend...');
+  await startBackend(pythonCmd);
+  await waitForBackend(60, 2000);
+
+  log(`✅ Rollback concluído para ${target}`);
+  return { success: true, backupDir, target };
+}
+
 function createSplashWindow() {
   splashWindow = new BrowserWindow({
     width: 600, height: 400,
@@ -270,6 +383,27 @@ function createMenu() {
       { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => mainWindow?.webContents.reload() },
       { label: 'DevTools', accelerator: 'CmdOrCtrl+Shift+I', click: () => mainWindow?.webContents.toggleDevTools() },
     ]},
+    { label: 'Rollback', submenu: [
+      { label: 'Rollback para commit anterior (HEAD^1)', click: () => {
+        const win = BrowserWindow.getFocusedWindow();
+        dialog.showMessageBox(win, {
+          type: 'warning', buttons: ['Cancelar', 'Rollback'],
+          defaultId: 0, cancelId: 0,
+          title: 'Rollback de Código',
+          message: 'Reverter para o commit anterior?',
+          detail: 'O backend será parado e reiniciado.\n' +
+            'Um snapshot dos bancos será salvo em data/backups/.',
+        }).then(({ response }) => {
+          if (response !== 1) return;
+          performRollback('HEAD^1')
+            .then((r) => dialog.showMessageBox(win, {
+              type: 'info', title: 'Rollback Concluído',
+              message: `✅ Rollback OK — backup em: ${r.backupDir}`,
+            }))
+            .catch((err) => dialog.showErrorBox('Rollback Falhou', err.message));
+        });
+      }},
+    ]},
     { label: 'Help', submenu: [{ label: 'About', click: () => {
       dialog.showMessageBox(mainWindow, {
         type: 'info', title: 'About Slap!',
@@ -286,13 +420,23 @@ app.on('ready', async () => {
     createSplashWindow();
     createMenu();
 
+    ipcMain.handle('rollback:execute', async (_event, { target }) => {
+      try {
+        const result = await performRollback(target);
+        return result;
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+
     const updateSplash = (msg) => {
       log(msg);
       splashWindow?.webContents.send('startup:status', msg);
     };
 
     updateSplash('🔍 Procurando Python...');
-    const pythonCmd = await findPython();
+    currentPythonCmd = await findPython();
+    const pythonCmd = currentPythonCmd;
     if (!pythonCmd) {
       throw new Error(
         'Python não encontrado no PATH.\n\n' +
