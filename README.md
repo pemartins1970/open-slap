@@ -1,4 +1,4 @@
-# Open Slap! — Assistente Inteligente Local
+# Open Slap! — Local Smart Assistant
 
 Backend: FastAPI (Python) · Frontend: React + Vite
 
