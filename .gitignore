@@ -71,6 +71,15 @@ data/*.db-wal
 # Internal development docs (not public until sprint end)
 docs/
 
+# Agent specifications and workspace
+.agents/
+
+# Backup files
+App_auth.jsx.bak
+
+# Codebase maps (local context only)
+openslap_codebase_map.md
+
 # Internal/experimental scripts
 scripts/setup_gemini/
 
