@@ -67,3 +67,12 @@ test_*.py
 *.sqlite
 data/*.db-shm
 data/*.db-wal
+
+# Internal development docs (not public until sprint end)
+docs/
+
+# Internal/experimental scripts
+scripts/setup_gemini/
+
+# Temporary files
+tmp/

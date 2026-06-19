@@ -1,25 +1,18 @@
-# Open Slap! — Assistente Inteligente Local (v2.2.6)
+# Open Slap! — Assistente Inteligente Local
 
-[![Version](https://img.shields.io/badge/version-2.2.6-blue.svg)](https://github.com/pemartins1970/open-slap)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![React](https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black)](https://react.dev)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](docs/LICENCE.md)
-[![Status](https://img.shields.io/badge/status-active-brightgreen.svg)](https://github.com/pemartins1970/open-slap)
-
-> Backend: FastAPI (Python) · Frontend: React + Vite · License: [Apache 2.0](docs/LICENCE.md)
+Backend: FastAPI (Python) · Frontend: React + Vite
 
 Open Slap! is a **desktop-local** assistant — a server running on your machine — with real-time chat, support for multiple LLM providers (local and free-tiers included), a full agentic team, and local automation with permissions.
 
 ---
 
-## What's in v2.1.1
+## Features
 
 | Area | What exists |
 |------|-------------|
 | **Real-time chat** | WebSocket with incremental streaming and connection state |
 | **MoE (experts)** | Expert selection by keywords + heuristics; override option |
-| **Plan→Build** | Structured plans (`plan` block) + incremental execution/orchestration |
+| **Plan→Build** | Structured plans + incremental execution/orchestration |
 | **Memory** | SQLite + RAG/FTS + heuristics (salience, decay, consolidation) |
 | **Connectors** | GitHub, Google Drive/Calendar/Gmail, Telegram (optional) |
 | **Security** | JWT, permission settings (OS commands, web retrieval, file write, connectors, system profile) |
@@ -33,17 +26,7 @@ Open Slap! is a **desktop-local** assistant — a server running on your machine
 open-slap/
 ├── backend/                  # Python/FastAPI server
 ├── frontend/                 # React + Vite UI
-├── docs/                     # Documentation (organizada por categoria)
-│   ├── changelog/
-│   ├── journal/
-│   ├── specs/
-│   ├── roadmap/
-│   ├── qa/
-│   ├── metrics/
-│   ├── state/
-│   ├── infrastructure/
-│   ├── reference/
-│   └── manifest/
+├── electron/                 # Desktop app (Electron)
 ├── .env.example              # Environment variables template
 └── README.md
 ```
@@ -92,14 +75,6 @@ Download the latest release from the [Releases page](https://github.com/pemartin
 | Windows (Portable)  | `Open Slap!-*-portable.exe` |
 | macOS               | `Open Slap!-*.dmg` |
 | Linux               | `Open Slap!-*.AppImage` |
-
-> Requires Python 3.11+ installed and in PATH.
-
-### 3) Desktop App (Electron)
-
-Download the latest release from the [Releases page](https://github.com/pemartins1970/open-slap/releases):
-- `Open-Slap-2.1.1-Setup.exe` — Windows installer
-- `Open-Slap-2.1.1-portable.exe` — Windows portable (no install)
 
 > Requires Python 3.11+ installed and in PATH.
 
@@ -152,16 +127,6 @@ pytest -q
 cd frontend
 npm run build
 ```
-
----
-
-## Documentation
-
-- [Installation Guide](docs/infrastructure/INSTALLATION.md)
-- [Dev Journal](docs/journal/DEV_JOURNAL.md)
-- [Changelog](docs/changelog/CHANGELOG.md)
-- [Manifesto](docs/manifest/MANIFESTO.md)
-- [License](docs/reference/LICENCE.md)
 
 ---
 
