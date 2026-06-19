@@ -277,6 +277,26 @@ async function execGitAsync(args) {
   });
 }
 
+async function getCommitInfo(ref) {
+  try {
+    const hash = (await execGitAsync(`rev-parse --short ${ref}`)).trim();
+    const date = (await execGitAsync(`log -1 --format=%ci ${ref}`)).trim();
+    const subject = (await execGitAsync(`log -1 --format=%s ${ref}`)).trim();
+    return { hash, date, subject };
+  } catch (_) {
+    return null;
+  }
+}
+
+async function isWorkingTreeClean() {
+  try {
+    const status = await execGitAsync('status --porcelain');
+    return status.length === 0;
+  } catch (_) {
+    return false;
+  }
+}
+
 async function hasSchemaMigration(target) {
   try {
     const out = await execGitAsync(`diff --name-only HEAD "${target}" -- backend/migrations/`);
@@ -300,18 +320,23 @@ async function performRollback(target) {
   if (!pythonCmd) throw new Error('Python não encontrado no PATH.');
   if (!target) throw new Error('Alvo do rollback não especificado (forneça um commit SHA, tag ou ref).');
 
+  // Abort se working tree estiver suja
+  log('🔍 Verificando working tree...');
+  if (!(await isWorkingTreeClean())) {
+    throw new Error(
+      'Rollback ABORTADO: há mudanças não commitadas no working tree.\n\n' +
+      'Faça commit ou descarte as mudanças antes de executar o rollback.\n' +
+      'Um snapshot dos bancos foi salvo em: ' + takeRollbackSnapshot(target)
+    );
+  }
+
   log(`🔄 Rollback iniciado para: ${target}`);
   const backupDir = takeRollbackSnapshot(target);
-
-  // Stash mudanças locais não commitadas
-  log('📦 Stashing mudanças locais...');
-  await execGitAsync('stash --include-untracked');
 
   // Verificar migração de schema — hard abort
   log('🔍 Verificando migrações de schema...');
   if (await hasSchemaMigration(target)) {
     log('❌ Migração de schema detectada — abortando rollback');
-    await execGitAsync('stash pop').catch(() => {});
     throw new Error(
       `Rollback ABORTADO: migração de schema detectada entre HEAD e ${target}.\n` +
       `Backup salvo em: ${backupDir}\n` +
@@ -342,7 +367,8 @@ async function performRollback(target) {
   await waitForBackend(60, 2000);
 
   log(`✅ Rollback concluído para ${target}`);
-  return { success: true, backupDir, target };
+  const commitInfo = await getCommitInfo(target).catch(() => null);
+  return { success: true, backupDir, target, commitInfo };
 }
 
 function createSplashWindow() {
@@ -386,21 +412,28 @@ function createMenu() {
     { label: 'Rollback', submenu: [
       { label: 'Rollback para commit anterior (HEAD^1)', click: () => {
         const win = BrowserWindow.getFocusedWindow();
-        dialog.showMessageBox(win, {
-          type: 'warning', buttons: ['Cancelar', 'Rollback'],
-          defaultId: 0, cancelId: 0,
-          title: 'Rollback de Código',
-          message: 'Reverter para o commit anterior?',
-          detail: 'O backend será parado e reiniciado.\n' +
-            'Um snapshot dos bancos será salvo em data/backups/.',
-        }).then(({ response }) => {
-          if (response !== 1) return;
-          performRollback('HEAD^1')
-            .then((r) => dialog.showMessageBox(win, {
-              type: 'info', title: 'Rollback Concluído',
-              message: `✅ Rollback OK — backup em: ${r.backupDir}`,
-            }))
-            .catch((err) => dialog.showErrorBox('Rollback Falhou', err.message));
+        getCommitInfo('HEAD^1').then((info) => {
+          const targetLabel = info
+            ? `HEAD^1 — ${info.hash} (${info.date.slice(0, 10)})\n"${info.subject}"`
+            : 'HEAD^1 (commit anterior)';
+          dialog.showMessageBox(win, {
+            type: 'warning', buttons: ['Cancelar', 'Rollback'],
+            defaultId: 0, cancelId: 0,
+            title: 'Rollback de Código',
+            message: `Reverter para: ${targetLabel}`,
+            detail: '⚠️ V1 — apenas HEAD^1 como alvo.\n' +
+              'O backend será parado e reiniciado.\n' +
+              'Um snapshot dos bancos será salvo em data/backups/.',
+          }).then(({ response }) => {
+            if (response !== 1) return;
+            performRollback('HEAD^1')
+              .then((r) => dialog.showMessageBox(win, {
+                type: 'info', title: 'Rollback Concluído',
+                message: `✅ Rollback para ${r.target} OK\n` +
+                  `Backup: ${r.backupDir}`,
+              }))
+              .catch((err) => dialog.showErrorBox('Rollback Falhou', err.message));
+          });
         });
       }},
     ]},
