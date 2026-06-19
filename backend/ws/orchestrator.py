@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from typing import Any, Dict, List, Optional
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -23,8 +24,10 @@ from backend.agents.base import agent_registry
 from backend.chronicle import (
     append_chronicle_entry,
     append_chronicle_file,
+    chronicle_search,
     close_any_open_session,
 )
+from backend.soul_extractor import extract_soul_fields, save_to_soul
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +109,7 @@ class WebSocketOrchestrator:
         
         # Imports locais para evitar dependência circular
         from backend.main_auth import (
+            FileWriteBlockedError,
             _safe_llm_settings,
             _get_effective_security_settings,
             _build_runtime_context_block,
@@ -158,6 +162,14 @@ class WebSocketOrchestrator:
             append_chronicle_entry(conversation_id, "user", user_message)
         except Exception as e:
             logger.error("Chronicle user entry failed: %s", e)
+
+        # SOUL: extrair perfil de mensagens do usuário (infra — não propaga falha)
+        try:
+            soul_fields = extract_soul_fields(user_message)
+            if soul_fields:
+                save_to_soul(user_id, soul_fields, user_message)
+        except Exception as e:
+            logger.error("SOUL extraction from user message failed: %s", e)
 
         # Enviar ACK do recebimento e status inicial
         client_message_id = data.get("client_message_id")
@@ -220,6 +232,14 @@ class WebSocketOrchestrator:
         # Combinar contexto (internal_prompt do frontend, se houver, fica no topo)
         internal_prompt = (data.get("internal_prompt") or "").strip()
         combined_context = "\n\n".join(filter(None, [internal_prompt, user_context, sys_ctx]))
+
+        # Chronic trigger: buscar histórico se mensagem contiver palavra-chave
+        try:
+            historic = _check_chronicle_trigger(user_message, conversation_id)
+            if historic:
+                combined_context = f"{combined_context}\n\n# Histórico de conversas anteriores\n{historic}"
+        except Exception as e:
+            logger.error("Chronic trigger failed: %s", e)
 
         await websocket.send_json({"type": "status", "content": "Gerando resposta..."})
 
@@ -299,6 +319,13 @@ class WebSocketOrchestrator:
                                 )
                         except Exception as _ce:
                             logger.error("Chronicle file write failed: %s", _ce)
+        except FileWriteBlockedError as _be:
+            error_msg = f"B.E.N. 2.0 bloqueou escrita: {_be}"
+            logger.warning(f"[B-05/H-01] {error_msg}")
+            await websocket.send_json({
+                "type": "error",
+                "content": error_msg
+            })
         except Exception as _fe:
             logger.warning(f"[B-05] Erro ao processar FILES_JSON no chat direto: {_fe}")
 
@@ -317,6 +344,14 @@ class WebSocketOrchestrator:
             append_chronicle_entry(conversation_id, "assistant", full_response)
         except Exception as e:
             logger.error("Chronicle assistant entry failed: %s", e)
+
+        # SOUL: extrair perfil de respostas do assistant (infra — não propaga falha)
+        try:
+            soul_fields = extract_soul_fields(full_response)
+            if soul_fields:
+                save_to_soul(user_id, soul_fields, full_response)
+        except Exception as e:
+            logger.error("SOUL extraction from assistant response failed: %s", e)
 
         # B-07: Auto-rename na primeira resposta do assistant
         try:
@@ -363,6 +398,72 @@ def _generate_conversation_title(first_user_message: str) -> str:
     if len(clean) <= 60:
         return clean
     return clean[:60].rstrip() + "\u2026"
+
+
+# --- Chronic trigger keywords (M-06) ---
+_CHRONIC_TRIGGER_PATTERNS = [
+    re.compile(r"\blembra\b", re.IGNORECASE),
+    re.compile(r"\blembrete\b", re.IGNORECASE),
+    re.compile(r"\banterior(?:mente)?\b", re.IGNORECASE),
+    re.compile(r"\bsemana passada\b", re.IGNORECASE),
+    re.compile(r"\bsess[ãa]o passada\b", re.IGNORECASE),
+    re.compile(r"\b[uú]ltima vez\b", re.IGNORECASE),
+    re.compile(r"\bcomo discutimos\b", re.IGNORECASE),
+    re.compile(r"\bvoc[êe] disse\b", re.IGNORECASE),
+    re.compile(r"\bremember\b", re.IGNORECASE),
+    re.compile(r"\bprevious\b", re.IGNORECASE),
+    re.compile(r"\byesterday\b", re.IGNORECASE),
+    re.compile(r"\blast time\b", re.IGNORECASE),
+    re.compile(r"\bas discussed\b", re.IGNORECASE),
+    re.compile(r"\byou said\b", re.IGNORECASE),
+    re.compile(r"\brecuerda\b", re.IGNORECASE),
+    re.compile(r"\bayer\b", re.IGNORECASE),
+    re.compile(r"\bdijiste\b", re.IGNORECASE),
+    re.compile(r"\bcomo discutimos\b", re.IGNORECASE),
+]
+
+_CHRONIC_TRIGGER_SUBSTR = [
+    # Árabe (MSA)
+    "\u062A\u0630\u0643\u0631",       # تذكر
+    "\u0633\u0627\u0628\u0642",        # سابق
+    "\u0627\u0644\u0623\u0645\u0633",  # الأمس
+    "\u0622\u062E\u0631 \u0645\u0631\u0629",  # آخر مرة
+    "\u0643\u0645\u0627 \u0646\u0627\u0642\u0634\u0646\u0627",  # كما ناقشنا
+    "\u0642\u0644\u062A",              # قلت
+    # Chinês (Mandarim)
+    "\u8BB0\u5F97",                    # 记得
+    "\u4E4B\u524D",                    # 之前
+    "\u6628\u5929",                    # 昨天
+    "\u4E0A\u6B21",                    # 上次
+    "\u6211\u4EEC\u8BA8\u8BBA\u8FC7", # 我们讨论过
+    "\u4F60\u8BF4\u8FC7",             # 你说过
+]
+
+
+def _check_chronicle_trigger(user_message: str, conversation_id: int) -> str:
+    """Check user message for chronicle trigger keywords and return formatted history."""
+    for pat in _CHRONIC_TRIGGER_PATTERNS:
+        if pat.search(user_message):
+            break
+    else:
+        for kw in _CHRONIC_TRIGGER_SUBSTR:
+            if kw in user_message:
+                break
+        else:
+            return ""
+
+    results = chronicle_search(user_message, limit=5)
+    if not results:
+        return ""
+
+    lines: List[str] = []
+    for r in results:
+        rid = r.get("conversation_id", "")
+        role = r.get("role", "user")
+        content = r.get("content", "")[:400]
+        created = r.get("created_at", "")[:16]
+        lines.append(f"- [{created}] ({role}, conv#{rid}): {content}")
+    return "\n".join(lines)
 
 
 ws_orchestrator = WebSocketOrchestrator()

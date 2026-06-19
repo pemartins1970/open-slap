@@ -4693,6 +4693,13 @@ async def _url_fetch_context(user_message: str) -> str:
     return out
 
 
+class FileWriteBlockedError(Exception):
+    """Levantado quando validate_code_execution() bloqueia um arquivo FILES_JSON."""
+
+
+EXECUTABLE_EXTENSIONS = {'.py', '.js', '.ts', '.sh', '.bat', '.ps1', '.rb', '.php'}
+
+
 def _write_files_bundle(bundle: Dict[str, Any]) -> Dict[str, Any]:
     base_path = str(bundle.get("base_path") or "").strip().strip("`\"' ,")
     files = bundle.get("files") or []
@@ -4703,6 +4710,24 @@ def _write_files_bundle(bundle: Dict[str, Any]) -> Dict[str, Any]:
     if not _is_allowed_write_root(base_path):
         raise Exception("Destino não permitido para escrita")
 
+    # Pass 1: validar TODOS os arquivos executáveis antes de escrever qualquer um
+    for f in files:
+        if not isinstance(f, dict):
+            continue
+        rel_path = str(f.get("path") or "").strip().lstrip("\\/").replace("/", os.sep)
+        content = f.get("content")
+        if not rel_path or content is None:
+            continue
+        ext = os.path.splitext(rel_path)[1].lower()
+        if ext in EXECUTABLE_EXTENSIONS:
+            from .security_guardrail import SecurityGuardrail
+            result = SecurityGuardrail.validate_code_execution(str(content))
+            if result["action"] == "block":
+                raise FileWriteBlockedError(
+                    f"File '{rel_path}' blocked: {result['reason']}"
+                )
+
+    # Pass 2: escrever todos (só chega aqui se todos passaram pela validação)
     written: List[str] = []
     for f in files:
         if not isinstance(f, dict):
@@ -5507,6 +5532,17 @@ async def _run_orchestration(
                             created = res.get("written") or []
                             if created:
                                 _record_activity_done(int(user_id), f"[FILES] Criados {len(created)} arquivo(s) para agente: {', '.join(created[:4])}{'…' if len(created) > 4 else ''}")
+                except FileWriteBlockedError as _be:
+                    error_msg = f"B.E.N. 2.0 bloqueou escrita de arquivo: {_be}"
+                    logger.warning(f"[H-01] {error_msg}")
+                    try:
+                        await _send_status(error_msg)
+                    except Exception:
+                        pass
+                    try:
+                        save_message(sub_conv_id, "assistant", error_msg)
+                    except Exception:
+                        pass
                 except Exception:
                     pass
                 try:
