@@ -74,6 +74,9 @@ docs/
 # Agent specifications and workspace
 .agents/
 
+# Rollback snapshots (local backups only)
+data/backups/
+
 # Backup files
 App_auth.jsx.bak
 
